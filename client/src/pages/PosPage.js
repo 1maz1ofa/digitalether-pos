@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { Modal } from "../components/Modal";
+
+const MULTI_STORE_STORAGE_KEY = "de-pos-multi-store";
 
 function money(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -11,8 +14,39 @@ function money(v) {
   });
 }
 
-function cartKey(productId) {
+function cartKey(productId, locationId, multiStore) {
+  if (multiStore && locationId != null && locationId !== "") {
+    const loc = Number(locationId);
+    if (Number.isInteger(loc) && loc >= 1) {
+      return `${productId}::${loc}`;
+    }
+  }
   return String(productId);
+}
+
+const UNCATEGORIZED_KEY = "__none__";
+
+function categoryKey(product) {
+  return product.category_id == null || product.category_id === ""
+    ? UNCATEGORIZED_KEY
+    : String(product.category_id);
+}
+
+function categoryLabel(product) {
+  if (product.category_id == null || product.category_id === "") {
+    return "Uncategorized";
+  }
+  const n = product.category_name?.trim();
+  return n || `Category #${product.category_id}`;
+}
+
+function readMultiStorePreference() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(MULTI_STORE_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function PosPage() {
@@ -22,11 +56,15 @@ export function PosPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [locationId, setLocationId] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
+  const [pickProduct, setPickProduct] = useState(null);
+  const [pickStoreId, setPickStoreId] = useState("");
 
   const load = useCallback(async () => {
     setError("");
@@ -57,19 +95,134 @@ export function PosPage() {
     }
   }, [locations, locationId]);
 
+  const locationNameById = useMemo(() => {
+    const m = new Map();
+    for (const l of locations) {
+      m.set(l.id, l.name || l.code || `Store #${l.id}`);
+    }
+    return m;
+  }, [locations]);
+
+  function applyMultiStore(nextMulti) {
+    try {
+      window.localStorage.setItem(MULTI_STORE_STORAGE_KEY, nextMulti ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+    setMultiStore(nextMulti);
+    setPickProduct(null);
+    const fallbackLoc =
+      (locationId && parseInt(locationId, 10)) ||
+      (locations[0] && locations[0].id) ||
+      null;
+
+    setCart((prev) => {
+      if (nextMulti) {
+        if (!fallbackLoc) return prev;
+        const next = new Map();
+        for (const line of prev.values()) {
+          const loc = line.location_id ?? fallbackLoc;
+          const key = cartKey(line.product_id, loc, true);
+          const existing = next.get(key);
+          if (existing) {
+            next.set(key, {
+              ...existing,
+              quantity: existing.quantity + line.quantity,
+            });
+          } else {
+            next.set(key, {
+              ...line,
+              cart_key: key,
+              location_id: loc,
+              location_label: locationNameById.get(loc) || `Store #${loc}`,
+            });
+          }
+        }
+        return next;
+      }
+      const next = new Map();
+      for (const line of prev.values()) {
+        const key = cartKey(line.product_id, null, false);
+        const existing = next.get(key);
+        const { location_id: _lid, location_label: _ll, cart_key: _ck, ...rest } = line;
+        if (existing) {
+          next.set(key, {
+            ...existing,
+            quantity: existing.quantity + line.quantity,
+          });
+        } else {
+          next.set(key, {
+            ...rest,
+            cart_key: key,
+          });
+        }
+      }
+      return next;
+    });
+  }
+
   const activeProducts = useMemo(
     () => products.filter((p) => p.is_active && p.unit_price != null && Number(p.unit_price) >= 0),
     [products]
   );
 
+  const categoryOptions = useMemo(() => {
+    const byKey = new Map();
+    for (const p of activeProducts) {
+      const key = categoryKey(p);
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          key,
+          label: categoryLabel(p),
+          sortLabel: key === UNCATEGORIZED_KEY ? "\uffff" : (categoryLabel(p) || "").toLowerCase(),
+        });
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) =>
+      a.sortLabel.localeCompare(b.sortLabel, undefined, { sensitivity: "base" })
+    );
+  }, [activeProducts]);
+
+  const categoryFilteredProducts = useMemo(() => {
+    if (!categoryFilter) return activeProducts;
+    return activeProducts.filter((p) => categoryKey(p) === categoryFilter);
+  }, [activeProducts, categoryFilter]);
+
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return activeProducts;
-    return activeProducts.filter((p) => {
-      const hay = `${p.code || ""} ${p.name || ""} ${p.barcode || ""}`.toLowerCase();
+    if (!q) return categoryFilteredProducts;
+    return categoryFilteredProducts.filter((p) => {
+      const hay = `${p.code || ""} ${p.name || ""} ${p.barcode || ""} ${categoryLabel(p)}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [activeProducts, search]);
+  }, [categoryFilteredProducts, search]);
+
+  const productGroups = useMemo(() => {
+    if (categoryFilter) return null;
+    const order = [];
+    const map = new Map();
+    for (const p of filteredProducts) {
+      const key = categoryKey(p);
+      let g = map.get(key);
+      if (!g) {
+        g = { key, title: categoryLabel(p), items: [] };
+        map.set(key, g);
+        order.push(g);
+      }
+      g.items.push(p);
+    }
+    order.sort((a, b) => {
+      if (a.key === UNCATEGORIZED_KEY) return 1;
+      if (b.key === UNCATEGORIZED_KEY) return -1;
+      return (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" });
+    });
+    for (const g of order) {
+      g.items.sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
+      );
+    }
+    return order;
+  }, [filteredProducts, categoryFilter]);
 
   const cartLines = useMemo(() => Array.from(cart.values()), [cart]);
 
@@ -86,7 +239,7 @@ export function PosPage() {
 
   function addToCart(product) {
     setLastReceipt(null);
-    const key = cartKey(product.id);
+    const key = cartKey(product.id, null, false);
     setCart((prev) => {
       const next = new Map(prev);
       const existing = next.get(key);
@@ -98,6 +251,7 @@ export function PosPage() {
         });
       } else {
         next.set(key, {
+          cart_key: key,
           product_id: product.id,
           code: product.code,
           name: product.name,
@@ -109,30 +263,80 @@ export function PosPage() {
     });
   }
 
-  function setLineQuantity(productId, qty) {
-    const key = cartKey(productId);
+  function addToCartAtLocation(product, locId) {
+    setLastReceipt(null);
+    const key = cartKey(product.id, locId, true);
+    const locLabel = locationNameById.get(locId) || `Store #${locId}`;
+    setCart((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(key);
+      const unitPrice = Number(product.unit_price);
+      if (existing) {
+        next.set(key, {
+          ...existing,
+          quantity: existing.quantity + 1,
+        });
+      } else {
+        next.set(key, {
+          cart_key: key,
+          product_id: product.id,
+          code: product.code,
+          name: product.name,
+          unit_price: unitPrice,
+          quantity: 1,
+          location_id: locId,
+          location_label: locLabel,
+        });
+      }
+      return next;
+    });
+  }
+
+  function beginAddProduct(product) {
+    if (multiStore) {
+      setError("");
+      setPickStoreId(locationId || (locations[0] ? String(locations[0].id) : ""));
+      setPickProduct(product);
+    } else {
+      addToCart(product);
+    }
+  }
+
+  function confirmPickStore() {
+    if (!pickProduct) return;
+    const loc = parseInt(pickStoreId, 10);
+    if (!Number.isInteger(loc) || loc < 1) {
+      setError("Select a store for this product.");
+      return;
+    }
+    setError("");
+    addToCartAtLocation(pickProduct, loc);
+    setPickProduct(null);
+  }
+
+  function setLineQuantity(lineKey, qty) {
     const n = Number(qty);
     if (!Number.isFinite(n) || n <= 0) {
       setCart((prev) => {
         const next = new Map(prev);
-        next.delete(key);
+        next.delete(lineKey);
         return next;
       });
       return;
     }
     setCart((prev) => {
       const next = new Map(prev);
-      const line = next.get(key);
+      const line = next.get(lineKey);
       if (!line) return prev;
-      next.set(key, { ...line, quantity: n });
+      next.set(lineKey, { ...line, quantity: n });
       return next;
     });
   }
 
-  function removeLine(productId) {
+  function removeLine(lineKey) {
     setCart((prev) => {
       const next = new Map(prev);
-      next.delete(cartKey(productId));
+      next.delete(lineKey);
       return next;
     });
   }
@@ -152,6 +356,10 @@ export function PosPage() {
       setError("Add at least one item to the cart.");
       return;
     }
+    if (multiStore && cartLines.some((l) => l.location_id == null || !Number.isInteger(l.location_id))) {
+      setError("Each cart line needs a store. Try toggling multiple stores off and on to refresh lines.");
+      return;
+    }
     setCheckoutLoading(true);
     try {
       const payload = {
@@ -160,6 +368,7 @@ export function PosPage() {
         items: cartLines.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
+          ...(multiStore ? { location_id: l.location_id } : {}),
         })),
       };
       const result = await api.pos.checkout(payload);
@@ -187,11 +396,34 @@ export function PosPage() {
         </div>
       ) : null}
 
-      {lastReceipt ? (
+      {lastReceipt?.invoices?.length ? (
         <div className="alert pos-receipt" role="status">
-          <strong>Sale recorded.</strong> Invoice{" "}
-          <code>{lastReceipt.invoice?.invoice_number}</code> — total{" "}
-          {money(lastReceipt.invoice?.total)}
+          <strong>Sale recorded.</strong>{" "}
+          {lastReceipt.invoices.length === 1 ? (
+            <>
+              Invoice <code>{lastReceipt.invoices[0].invoice?.invoice_number}</code> — total{" "}
+              {money(lastReceipt.invoices[0].invoice?.total)}
+            </>
+          ) : (
+            <>
+              {lastReceipt.invoices.length} invoices (one per store):{" "}
+              {lastReceipt.invoices.map((pack, i) => (
+                <span key={pack.invoice?.id ?? i}>
+                  {i > 0 ? "; " : null}
+                  <code>{pack.invoice?.invoice_number}</code> ({money(pack.invoice?.total)})
+                </span>
+              ))}
+              . Combined total{" "}
+              <strong>
+                {money(
+                  lastReceipt.invoices.reduce(
+                    (s, pack) => s + Number(pack.invoice?.total || 0),
+                    0
+                  )
+                )}
+              </strong>
+            </>
+          )}
         </div>
       ) : null}
 
@@ -201,34 +433,87 @@ export function PosPage() {
             <input
               className="input pos-search"
               type="search"
-              placeholder="Search code, name, or barcode…"
+              placeholder="Search code, name, barcode, or category…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search products"
             />
+            <label className="pos-multi-store-toggle">
+              <input
+                type="checkbox"
+                checked={multiStore}
+                onChange={(e) => applyMultiStore(e.target.checked)}
+              />
+              <span>Multiple stores</span>
+            </label>
           </div>
+          {!loading && categoryOptions.length > 0 ? (
+            <div className="pos-category-bar" role="toolbar" aria-label="Filter by category">
+              <button
+                type="button"
+                className={`pos-category-chip${categoryFilter === "" ? " pos-category-chip--active" : ""}`}
+                onClick={() => setCategoryFilter("")}
+              >
+                All
+              </button>
+              {categoryOptions.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  className={`pos-category-chip${
+                    categoryFilter === opt.key ? " pos-category-chip--active" : ""
+                  }`}
+                  onClick={() => setCategoryFilter(opt.key)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {loading ? (
             <p className="muted">Loading…</p>
+          ) : filteredProducts.length === 0 ? (
+            <p className="muted pos-grid-empty">No matching products with a price.</p>
+          ) : productGroups ? (
+            <div className="pos-product-groups">
+              {productGroups.map((g) => (
+                <div key={g.key} className="pos-product-group">
+                  <h3 className="pos-product-group-title">{g.title}</h3>
+                  <div className="pos-product-grid pos-product-grid--section">
+                    {g.items.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="pos-product-tile"
+                        onClick={() => beginAddProduct(p)}
+                      >
+                        <span className="pos-product-name">{p.name}</span>
+                        <span className="pos-product-meta">
+                          <code>{p.code}</code>
+                          <span className="pos-product-price">{money(p.unit_price)}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="pos-product-grid">
-              {filteredProducts.length === 0 ? (
-                <p className="muted pos-grid-empty">No matching products with a price.</p>
-              ) : (
-                filteredProducts.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="pos-product-tile"
-                    onClick={() => addToCart(p)}
-                  >
-                    <span className="pos-product-name">{p.name}</span>
-                    <span className="pos-product-meta">
-                      <code>{p.code}</code>
-                      <span className="pos-product-price">{money(p.unit_price)}</span>
-                    </span>
-                  </button>
-                ))
-              )}
+              {filteredProducts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="pos-product-tile"
+                  onClick={() => beginAddProduct(p)}
+                >
+                  <span className="pos-product-name">{p.name}</span>
+                  <span className="pos-product-meta">
+                    <code>{p.code}</code>
+                    <span className="pos-product-price">{money(p.unit_price)}</span>
+                  </span>
+                </button>
+              ))}
             </div>
           )}
         </section>
@@ -236,7 +521,9 @@ export function PosPage() {
         <aside className="card pos-cart">
           <h2 className="pos-cart-title">Current sale</h2>
           <label className="field">
-            <span className="field-label">Location</span>
+            <span className="field-label">
+              {multiStore ? "Default store (when adding)" : "Location"}
+            </span>
             <select
               className="input"
               value={locationId}
@@ -271,11 +558,17 @@ export function PosPage() {
               <p className="muted">Cart is empty. Tap a product to add.</p>
             ) : (
               cartLines.map((line) => (
-                <div key={line.product_id} className="pos-line">
+                <div key={line.cart_key} className="pos-line">
                   <div className="pos-line-info">
                     <div className="pos-line-name">{line.name}</div>
                     <div className="pos-line-sub">
                       <code>{line.code}</code> × {money(line.unit_price)}
+                      {multiStore && line.location_label ? (
+                        <>
+                          {" "}
+                          · <span className="pos-line-store">{line.location_label}</span>
+                        </>
+                      ) : null}
                     </div>
                   </div>
                   <div className="pos-line-actions">
@@ -285,13 +578,13 @@ export function PosPage() {
                       min="1"
                       step="1"
                       value={line.quantity}
-                      onChange={(e) => setLineQuantity(line.product_id, e.target.value)}
+                      onChange={(e) => setLineQuantity(line.cart_key, e.target.value)}
                       aria-label={`Quantity for ${line.name}`}
                     />
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
-                      onClick={() => removeLine(line.product_id)}
+                      onClick={() => removeLine(line.cart_key)}
                       aria-label={`Remove ${line.name}`}
                     >
                       ×
@@ -331,6 +624,48 @@ export function PosPage() {
           </div>
         </aside>
       </div>
+
+      <Modal
+        title="Select store"
+        isOpen={Boolean(pickProduct)}
+        onClose={() => setPickProduct(null)}
+        footer={
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setPickProduct(null)}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" onClick={confirmPickStore}>
+              Add to cart
+            </button>
+          </>
+        }
+      >
+        {pickProduct ? (
+          <div className="form-grid">
+            <p className="muted" style={{ margin: 0 }}>
+              Choose which store this product is picked from.
+            </p>
+            <p style={{ margin: 0 }}>
+              <strong>{pickProduct.name}</strong> <code>{pickProduct.code}</code>
+            </p>
+            <label className="field">
+              <span className="field-label">Store</span>
+              <select
+                className="input"
+                value={pickStoreId}
+                onChange={(e) => setPickStoreId(e.target.value)}
+              >
+                <option value="">— Select —</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={String(l.id)}>
+                    {l.name || l.code || `Location #${l.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

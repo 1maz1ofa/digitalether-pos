@@ -13,10 +13,12 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test("renders admin shell and categories after redirect", async () => {
+test("renders admin shell and POS after redirect", async () => {
   render(<App />);
   expect(screen.getByText(/digitalether/i)).toBeInTheDocument();
   await waitFor(() => {
-    expect(screen.getByRole("heading", { name: /categories/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /point of sale/i })
+    ).toBeInTheDocument();
   });
 });

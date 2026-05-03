@@ -11,7 +11,7 @@ const nav = [
 export function AdminLayout() {
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      <header className="admin-header">
         <div className="admin-brand">
           <span className="admin-brand-mark">DE</span>
           <div>
@@ -32,7 +32,7 @@ export function AdminLayout() {
             </NavLink>
           ))}
         </nav>
-      </aside>
+      </header>
       <main className="admin-main">
         <Outlet />
       </main>

@@ -8,7 +8,6 @@
   --primary-hover: #2563eb;
   --danger: #ef4444;
   --danger-hover: #dc2626;
-  --sidebar-width: 240px;
   --radius: 10px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
@@ -16,19 +15,27 @@
 .admin-shell {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--text);
 }
 
-.admin-sidebar {
-  width: var(--sidebar-width);
+.admin-header {
+  width: 100%;
   flex-shrink: 0;
-  background: var(--bg-elevated);
-  border-right: 1px solid var(--border);
-  padding: 1.25rem 1rem;
   display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-header .admin-brand {
+  flex-shrink: 0;
 }
 
 .admin-brand {
@@ -64,8 +71,13 @@
 
 .admin-nav {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: min(100%, 12rem);
 }
 
 .admin-nav-link {
@@ -394,7 +406,7 @@ code {
 
 .pos-shell {
   display: grid;
-  grid-template-columns: 1fr min(380px, 100%);
+  grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
   align-items: start;
 }
@@ -414,11 +426,82 @@ code {
 
 .pos-catalog-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.75rem;
 }
 
 .pos-search {
   flex: 1;
+  min-width: 160px;
+}
+
+.pos-multi-store-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.pos-multi-store-toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--primary);
+}
+
+.pos-category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.pos-category-chip {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.pos-category-chip:hover {
+  color: var(--text);
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.pos-category-chip--active {
+  color: var(--text);
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.pos-product-groups {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  padding: 0.15rem;
+  margin: 0 -0.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.pos-product-group-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .pos-product-grid {
@@ -429,6 +512,13 @@ code {
   overflow-y: auto;
   padding: 0.15rem;
   margin: 0 -0.15rem;
+}
+
+.pos-product-grid--section {
+  max-height: none;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
 }
 
 .pos-grid-empty {
@@ -532,6 +622,11 @@ code {
   color: var(--muted);
 }
 
+.pos-line-store {
+  color: var(--text);
+  font-weight: 500;
+}
+
 .pos-line-actions {
   display: flex;
   align-items: center;
@@ -584,23 +679,6 @@ code {
 }
 
 @media (max-width: 720px) {
-  .admin-shell {
-    flex-direction: column;
-  }
-
-  .admin-sidebar {
-    width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .admin-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    flex: 1;
-  }
-
   .form-grid--2 {
     grid-template-columns: 1fr;
   }

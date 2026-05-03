@@ -10,14 +10,14 @@ function roundMoney(n) {
 
 /**
  * POST /api/pos/checkout
- * Body: { location_id, customer_id? (optional), items: [{ product_id, quantity }] }
- * Creates an invoice and line items using current product unit prices from the database.
+ * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }] }
+ * Each line may include location_id; otherwise body.location_id is used as the default.
+ * Lines are grouped by resolved location: one completed invoice per distinct location.
  */
 router.post("/checkout", async (req, res) => {
-  const locationId = parseInt(req.body?.location_id, 10);
-  if (!Number.isInteger(locationId) || locationId < 1) {
-    return res.status(400).json({ error: "location_id is required" });
-  }
+  const defaultLocationRaw = req.body?.location_id;
+  const defaultLocationId = parseInt(defaultLocationRaw, 10);
+  const hasDefaultLocation = Number.isInteger(defaultLocationId) && defaultLocationId >= 1;
 
   let customerId = null;
   const rawCustomer = req.body?.customer_id;
@@ -36,14 +36,6 @@ router.post("/checkout", async (req, res) => {
 
   const client = await pool.connect();
   try {
-    const locChk = await client.query(
-      "SELECT 1 FROM location WHERE id = $1 AND COALESCE(is_active, true) = true",
-      [locationId]
-    );
-    if (!locChk.rowCount) {
-      return res.status(400).json({ error: "Invalid or inactive location" });
-    }
-
     if (customerId !== null) {
       const custChk = await client.query("SELECT 1 FROM customers WHERE id = $1", [
         customerId,
@@ -53,7 +45,7 @@ router.post("/checkout", async (req, res) => {
       }
     }
 
-    const lines = [];
+    const pricedLines = [];
     for (const line of items) {
       const productId = parseInt(line?.product_id, 10);
       const qty = Number(line?.quantity);
@@ -63,6 +55,23 @@ router.post("/checkout", async (req, res) => {
       if (!Number.isFinite(qty) || qty <= 0) {
         return res.status(400).json({ error: "Each item needs quantity greater than zero" });
       }
+
+      let lineLocationId = null;
+      const rawLoc = line?.location_id;
+      if (rawLoc !== undefined && rawLoc !== null && rawLoc !== "") {
+        const loc = parseInt(rawLoc, 10);
+        if (!Number.isInteger(loc) || loc < 1) {
+          return res.status(400).json({ error: "Each item needs a valid location_id when provided" });
+        }
+        lineLocationId = loc;
+      } else if (hasDefaultLocation) {
+        lineLocationId = defaultLocationId;
+      } else {
+        return res.status(400).json({
+          error: "location_id is required on the sale or on each line item",
+        });
+      }
+
       const { rows } = await client.query(
         `SELECT id, unit_price, is_active FROM product WHERE id = $1`,
         [productId]
@@ -81,35 +90,59 @@ router.post("/checkout", async (req, res) => {
         });
       }
       const lineTotal = roundMoney(qty * unitPrice);
-      lines.push({ productId, qty, unitPrice, lineTotal });
+      pricedLines.push({ productId, qty, unitPrice, lineTotal, locationId: lineLocationId });
     }
 
-    const invoiceTotal = roundMoney(lines.reduce((s, L) => s + L.lineTotal, 0));
-    const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const locationIds = [...new Set(pricedLines.map((L) => L.locationId))];
+    for (const locId of locationIds) {
+      const locChk = await client.query(
+        "SELECT 1 FROM location WHERE id = $1 AND COALESCE(is_active, true) = true",
+        [locId]
+      );
+      if (!locChk.rowCount) {
+        return res.status(400).json({ error: "Invalid or inactive location" });
+      }
+    }
+
+    const byLocation = new Map();
+    for (const L of pricedLines) {
+      if (!byLocation.has(L.locationId)) {
+        byLocation.set(L.locationId, []);
+      }
+      byLocation.get(L.locationId).push(L);
+    }
 
     await client.query("BEGIN");
 
-    const { rows: invRows } = await client.query(
-      `INSERT INTO invoices (invoice_number, customer_id, location_id, total, status)
-       VALUES ($1, $2, $3, $4, 'completed')
-       RETURNING id, invoice_number, customer_id, location_id, total, status, created_at`,
-      [invoiceNumber, customerId, locationId, invoiceTotal]
-    );
-    const invoice = invRows[0];
+    const invoices = [];
+    let invIndex = 0;
+    for (const [locId, groupLines] of byLocation) {
+      const invoiceTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineTotal, 0));
+      const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${invIndex++}`;
 
-    const savedItems = [];
-    for (const L of lines) {
-      const { rows: itemRows } = await client.query(
-        `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, total)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, product_id, quantity, unit_price, total`,
-        [invoice.id, L.productId, L.qty, L.unitPrice, L.lineTotal]
+      const { rows: invRows } = await client.query(
+        `INSERT INTO invoices (invoice_number, customer_id, location_id, total, status)
+         VALUES ($1, $2, $3, $4, 'completed')
+         RETURNING id, invoice_number, customer_id, location_id, total, status, created_at`,
+        [invoiceNumber, customerId, locId, invoiceTotal]
       );
-      savedItems.push(itemRows[0]);
+      const invoice = invRows[0];
+
+      const savedItems = [];
+      for (const L of groupLines) {
+        const { rows: itemRows } = await client.query(
+          `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, total)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, product_id, quantity, unit_price, total`,
+          [invoice.id, L.productId, L.qty, L.unitPrice, L.lineTotal]
+        );
+        savedItems.push(itemRows[0]);
+      }
+      invoices.push({ invoice, items: savedItems });
     }
 
     await client.query("COMMIT");
-    res.status(201).json({ invoice, items: savedItems });
+    res.status(201).json({ invoices });
   } catch (err) {
     try {
       await client.query("ROLLBACK");
