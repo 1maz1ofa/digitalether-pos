@@ -26,6 +26,16 @@ function cartKey(productId, locationId, multiStore) {
 
 const UNCATEGORIZED_KEY = "__none__";
 
+const SALE_TYPES = [
+  { value: "cash", label: "Cash" },
+  { value: "laybye", label: "Laybye" },
+  { value: "htb", label: "HTB" },
+];
+
+function saleTypeLabel(value) {
+  return SALE_TYPES.find((t) => t.value === value)?.label ?? value;
+}
+
 function categoryKey(product) {
   return product.category_id == null || product.category_id === ""
     ? UNCATEGORIZED_KEY
@@ -65,6 +75,8 @@ export function PosPage() {
   const [lastReceipt, setLastReceipt] = useState(null);
   const [pickProduct, setPickProduct] = useState(null);
   const [pickStoreId, setPickStoreId] = useState("");
+  const [saleType, setSaleType] = useState("cash");
+  const [completedSaleTypeLabel, setCompletedSaleTypeLabel] = useState(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -348,6 +360,7 @@ export function PosPage() {
   async function handleCheckout() {
     setError("");
     setLastReceipt(null);
+    setCompletedSaleTypeLabel(null);
     if (!locationId) {
       setError("Select a location.");
       return;
@@ -365,6 +378,7 @@ export function PosPage() {
       const payload = {
         location_id: parseInt(locationId, 10),
         customer_id: customerId === "" ? null : parseInt(customerId, 10),
+        sale_type: saleType,
         items: cartLines.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
@@ -372,6 +386,7 @@ export function PosPage() {
         })),
       };
       const result = await api.pos.checkout(payload);
+      setCompletedSaleTypeLabel(saleTypeLabel(saleType));
       setLastReceipt(result);
       clearCart();
     } catch (e) {
@@ -398,7 +413,14 @@ export function PosPage() {
 
       {lastReceipt?.invoices?.length ? (
         <div className="alert pos-receipt" role="status">
-          <strong>Sale recorded.</strong>{" "}
+          <strong>Sale recorded</strong>
+          {completedSaleTypeLabel ? (
+            <>
+              {" "}
+              (<span className="pos-receipt-sale-type">{completedSaleTypeLabel}</span>)
+            </>
+          ) : null}
+          .{" "}
           {lastReceipt.invoices.length === 1 ? (
             <>
               Invoice <code>{lastReceipt.invoices[0].invoice?.invoice_number}</code> — total{" "}
@@ -428,7 +450,32 @@ export function PosPage() {
       ) : null}
 
       <div className="pos-shell">
-        <section className="card pos-catalog">
+        <div className="card pos-sale-type-row">
+          <fieldset className="pos-sale-type pos-sale-type--bar">
+            <legend className="pos-sale-type-bar-legend">Sale type</legend>
+            <div className="pos-sale-type-radios">
+              {SALE_TYPES.map((opt) => (
+                <label key={opt.value} className="pos-sale-type-option">
+                  <input
+                    type="radio"
+                    name="pos-sale-type"
+                    value={opt.value}
+                    checked={saleType === opt.value}
+                    onChange={() => setSaleType(opt.value)}
+                  />
+                  <span>{opt.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="pos-sale-type-current" aria-live="polite" aria-atomic="true">
+              <span className="pos-sale-type-current-kicker">Selected</span>
+              <span className="pos-sale-type-current-label">{saleTypeLabel(saleType)}</span>
+            </div>
+          </fieldset>
+        </div>
+
+        <div className="pos-main-columns">
+          <section className="card pos-catalog">
           <div className="pos-catalog-toolbar">
             <input
               className="input pos-search"
@@ -518,111 +565,112 @@ export function PosPage() {
           )}
         </section>
 
-        <aside className="card pos-cart">
-          <h2 className="pos-cart-title">Current sale</h2>
-          <label className="field">
-            <span className="field-label">
-              {multiStore ? "Default store (when adding)" : "Location"}
-            </span>
-            <select
-              className="input"
-              value={locationId}
-              onChange={(e) => setLocationId(e.target.value)}
-            >
-              <option value="">— Select —</option>
-              {locations.map((l) => (
-                <option key={l.id} value={String(l.id)}>
-                  {l.name || l.code || `Location #${l.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">Customer (optional)</span>
-            <select
-              className="input"
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-            >
-              <option value="">Walk-in</option>
-              {customers.map((c) => (
-                <option key={c.id} value={String(c.id)}>
-                  {c.name || `Customer #${c.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
+          <aside className="card pos-cart">
+            <h2 className="pos-cart-title">Current sale</h2>
+            <label className="field">
+              <span className="field-label">
+                {multiStore ? "Default store (when adding)" : "Location"}
+              </span>
+              <select
+                className="input"
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+              >
+                <option value="">— Select —</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={String(l.id)}>
+                    {l.name || l.code || `Location #${l.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">Customer (optional)</span>
+              <select
+                className="input"
+                value={customerId}
+                onChange={(e) => setCustomerId(e.target.value)}
+              >
+                <option value="">Walk-in</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.name || `Customer #${c.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <div className="pos-cart-lines">
-            {cartLines.length === 0 ? (
-              <p className="muted">Cart is empty. Tap a product to add.</p>
-            ) : (
-              cartLines.map((line) => (
-                <div key={line.cart_key} className="pos-line">
-                  <div className="pos-line-info">
-                    <div className="pos-line-name">{line.name}</div>
-                    <div className="pos-line-sub">
-                      <code>{line.code}</code> × {money(line.unit_price)}
-                      {multiStore && line.location_label ? (
-                        <>
-                          {" "}
-                          · <span className="pos-line-store">{line.location_label}</span>
-                        </>
-                      ) : null}
+            <div className="pos-cart-lines">
+              {cartLines.length === 0 ? (
+                <p className="muted">Cart is empty. Tap a product to add.</p>
+              ) : (
+                cartLines.map((line) => (
+                  <div key={line.cart_key} className="pos-line">
+                    <div className="pos-line-info">
+                      <div className="pos-line-name">{line.name}</div>
+                      <div className="pos-line-sub">
+                        <code>{line.code}</code> × {money(line.unit_price)}
+                        {multiStore && line.location_label ? (
+                          <>
+                            {" "}
+                            · <span className="pos-line-store">{line.location_label}</span>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
+                    <div className="pos-line-actions">
+                      <input
+                        className="input pos-qty"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={line.quantity}
+                        onChange={(e) => setLineQuantity(line.cart_key, e.target.value)}
+                        aria-label={`Quantity for ${line.name}`}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => removeLine(line.cart_key)}
+                        aria-label={`Remove ${line.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="pos-line-total">{money(line.quantity * line.unit_price)}</div>
                   </div>
-                  <div className="pos-line-actions">
-                    <input
-                      className="input pos-qty"
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={line.quantity}
-                      onChange={(e) => setLineQuantity(line.cart_key, e.target.value)}
-                      aria-label={`Quantity for ${line.name}`}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => removeLine(line.cart_key)}
-                      aria-label={`Remove ${line.name}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <div className="pos-line-total">{money(line.quantity * line.unit_price)}</div>
-                </div>
-              ))
-            )}
-          </div>
+                ))
+              )}
+            </div>
 
-          <div className="pos-cart-footer">
-            <div className="pos-subtotal">
-              <span>Subtotal</span>
-              <strong>{money(subtotal)}</strong>
+            <div className="pos-cart-footer">
+              <div className="pos-subtotal">
+                <span>Subtotal</span>
+                <strong>{money(subtotal)}</strong>
+              </div>
+              <div className="pos-cart-buttons">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={cartLines.length === 0 || checkoutLoading}
+                  onClick={clearCart}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary pos-pay"
+                  disabled={
+                    !locationId || cartLines.length === 0 || checkoutLoading || loading
+                  }
+                  onClick={handleCheckout}
+                >
+                  {checkoutLoading ? "Processing…" : "Complete sale"}
+                </button>
+              </div>
             </div>
-            <div className="pos-cart-buttons">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={cartLines.length === 0 || checkoutLoading}
-                onClick={clearCart}
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary pos-pay"
-                disabled={
-                  !locationId || cartLines.length === 0 || checkoutLoading || loading
-                }
-                onClick={handleCheckout}
-              >
-                {checkoutLoading ? "Processing…" : "Complete sale"}
-              </button>
-            </div>
-          </div>
-        </aside>
+          </aside>
+        </div>
       </div>
 
       <Modal

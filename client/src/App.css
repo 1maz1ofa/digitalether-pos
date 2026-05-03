@@ -405,14 +405,48 @@ code {
 }
 
 .pos-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.pos-sale-type-row {
+  flex: 0 0 auto;
+  padding: 0.65rem 1rem;
+}
+
+.pos-sale-type--bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+}
+
+.pos-sale-type-bar-legend {
+  float: none;
+  padding: 0;
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: auto;
+}
+
+.pos-main-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
   align-items: start;
+  min-height: 0;
+  flex: 1;
 }
 
 @media (max-width: 960px) {
-  .pos-shell {
+  .pos-main-columns {
     grid-template-columns: 1fr;
   }
 }
@@ -579,6 +613,81 @@ code {
 .pos-cart-title {
   margin: 0;
   font-size: 1rem;
+  font-weight: 600;
+}
+
+.pos-sale-type {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.pos-sale-type .field-label {
+  padding: 0;
+  margin-bottom: 0.4rem;
+}
+
+.pos-sale-type-radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2.25rem;
+  align-items: center;
+}
+
+.pos-sale-type-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 1.2rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.pos-sale-type-option input[type="radio"] {
+  margin: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.pos-sale-type--bar .pos-sale-type-radios {
+  flex: 1;
+  min-width: 0;
+}
+
+.pos-sale-type-current {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.pos-sale-type-current-kicker {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pos-sale-type-current-label {
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--primary);
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.pos-receipt-sale-type {
   font-weight: 600;
 }
 
