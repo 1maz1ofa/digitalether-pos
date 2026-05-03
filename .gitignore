@@ -1,0 +1,38 @@
+# =====================
+# Root
+# =====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+
+# =====================
+# Server (Node / Express)
+# =====================
+server/node_modules/
+server/.env
+
+# =====================
+# Client (React / CRA)
+# =====================
+client/node_modules/
+client/build/
+client/.env
+client/.env.local
+client/.env.development
+client/.env.production
+
+# =====================
+# OS / Editor junk
+# =====================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =====================
+# Coverage & tests
+# =====================
+coverage/
