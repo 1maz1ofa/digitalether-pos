@@ -5,6 +5,7 @@ const categoriesRouter = require("./routes/categories");
 const locationsRouter = require("./routes/locations");
 const productsRouter = require("./routes/products");
 const customersRouter = require("./routes/customers");
+const posRouter = require("./routes/pos");
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use("/api/categories", categoriesRouter);
 app.use("/api/locations", locationsRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/customers", customersRouter);
+app.use("/api/pos", posRouter);
 
 // ✅ Database test route
 app.get("/test-db", async (req, res) => {

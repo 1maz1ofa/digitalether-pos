@@ -77,4 +77,11 @@ export const api = {
     remove: (id) =>
       apiRequest(`/api/customers/${id}`, { method: "DELETE" }),
   },
+  pos: {
+    checkout: (data) =>
+      apiRequest("/api/pos/checkout", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
 };

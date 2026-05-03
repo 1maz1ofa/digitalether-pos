@@ -4,6 +4,7 @@ import { CategoriesPage } from "./pages/CategoriesPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { LocationsPage } from "./pages/LocationsPage";
 import { ProductsPage } from "./pages/ProductsPage";
+import { PosPage } from "./pages/PosPage";
 import "./App.css";
 
 function App() {
@@ -11,7 +12,8 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<AdminLayout />}>
-          <Route index element={<Navigate to="/categories" replace />} />
+          <Route index element={<Navigate to="/pos" replace />} />
+          <Route path="pos" element={<PosPage />} />
           <Route path="categories" element={<CategoriesPage />} />
           <Route path="locations" element={<LocationsPage />} />
           <Route path="products" element={<ProductsPage />} />
