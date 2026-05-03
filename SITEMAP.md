@@ -5,6 +5,7 @@ This file documents the full folder & file structure of the project.
 ---
 
 ```
+├── .gitignore
 ├── client
 │   ├── .gitignore
 │   ├── package-lock.json
@@ -30,6 +31,7 @@ This file documents the full folder & file structure of the project.
 ├── package.json
 ├── README.md
 ├── server
+│   ├── db.js
 │   ├── index.js
 │   ├── package-lock.json
 │   └── package.json
@@ -38,4 +40,4 @@ This file documents the full folder & file structure of the project.
 
 ```
 
-Generated on: 1/5/2026, 12:58:55
+Generated on: 3/5/2026, 16:47:30
