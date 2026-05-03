@@ -1,17 +1,24 @@
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db"); // ✅ import DB connection
+const pool = require("./db");
+const categoriesRouter = require("./routes/categories");
+const locationsRouter = require("./routes/locations");
+const productsRouter = require("./routes/products");
+const customersRouter = require("./routes/customers");
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Base route
 app.get("/", (req, res) => {
   res.json({ message: "Server is running 🚀" });
 });
+
+app.use("/api/categories", categoriesRouter);
+app.use("/api/locations", locationsRouter);
+app.use("/api/products", productsRouter);
+app.use("/api/customers", customersRouter);
 
 // ✅ Database test route
 app.get("/test-db", async (req, res) => {

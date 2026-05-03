@@ -1,0 +1,200 @@
+-- =========================-- CATEGORY
+-- =========================
+CREATE TABLE category (
+    id SERIAL PRIMARY KEY,
+    name TEXT
+);
+
+-- =========================
+-- LOCATION (BRANCHES)
+-- =========================
+CREATE TABLE location (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) UNIQUE,
+    name TEXT,
+    address TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================
+-- PRODUCTS
+-- =========================
+CREATE TABLE product (
+    id SERIAL PRIMARY KEY,
+    code TEXT UNIQUE,
+    name TEXT,
+    description TEXT,
+    barcode TEXT,
+    unit_of_measure TEXT,
+    category_id INTEGER REFERENCES category(id),
+    unit_cost DECIMAL,
+    unit_price DECIMAL,
+    price_includes_vat BOOLEAN,
+    is_active BOOLEAN DEFAULT TRUE,
+    reorder_level INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================
+-- INVENTORY (PER LOCATION)
+-- =========================
+CREATE TABLE inventory (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER REFERENCES product(id),
+    location_id INTEGER REFERENCES location(id),
+    quantity DECIMAL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(product_id, location_id)
+);
+
+-- =========================
+-- STOCK MOVEMENTS
+-- =========================
+CREATE TABLE stock_movements (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER REFERENCES product(id),
+    from_location_id INTEGER REFERENCES location(id),
+    to_location_id INTEGER REFERENCES location(id),
+    quantity DECIMAL,
+    movement_type VARCHAR(50),
+    reference_type VARCHAR(50),
+    reference_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================
+-- CUSTOMERS
+-- =========================
+CREATE TABLE customers (
+    id SERIAL PRIMARY KEY,
+    name TEXT,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================
+-- INVOICES
+-- =========================
+CREATE TABLE invoices (
+    id SERIAL PRIMARY KEY,
+    invoice_number TEXT UNIQUE,
+    customer_id INTEGER REFERENCES customers(id),
+    location_id INTEGER REFERENCES location(id),
+    total DECIMAL,
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE invoice_items (
+    id SERIAL PRIMARY KEY,
+    invoice_id INTEGER REFERENCES invoices(id),
+    product_id INTEGER REFERENCES product(id),
+    quantity DECIMAL,
+    unit_price DECIMAL,
+    total DECIMAL
+);
+
+-- =========================
+-- ORDERS
+-- =========================
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY,
+    order_number TEXT UNIQUE,
+    customer_id INTEGER REFERENCES customers(id),
+    location_id INTEGER REFERENCES location(id),
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE order_items (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER REFERENCES orders(id),
+    product_id INTEGER REFERENCES product(id),
+    quantity DECIMAL,
+    unit_price DECIMAL
+);
+
+-- =========================
+-- QUOTES
+-- =========================
+CREATE TABLE quotes (
+    id SERIAL PRIMARY KEY,
+    quote_number TEXT UNIQUE,
+    customer_id INTEGER REFERENCES customers(id),
+    location_id INTEGER REFERENCES location(id),
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE quote_items (
+    id SERIAL PRIMARY KEY,
+    quote_id INTEGER REFERENCES quotes(id),
+    product_id INTEGER REFERENCES product(id),
+    quantity DECIMAL,
+    unit_price DECIMAL
+);
+
+-- =========================
+-- STOCK TAKES
+-- =========================
+CREATE TABLE stock_takes (
+    id SERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES location(id),
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE stock_take_items (
+    id SERIAL PRIMARY KEY,
+    stock_take_id INTEGER REFERENCES stock_takes(id),
+    product_id INTEGER REFERENCES product(id),
+    system_quantity DECIMAL,
+    counted_quantity DECIMAL,
+    variance DECIMAL
+);
+
+-- =========================
+-- PURCHASE ORDERS
+-- =========================
+CREATE TABLE purchase_orders (
+    id SERIAL PRIMARY KEY,
+    order_number TEXT UNIQUE,
+    supplier_id INTEGER,
+    location_id INTEGER REFERENCES location(id),
+    status VARCHAR(50),
+    total DECIMAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE purchase_order_items (
+    id SERIAL PRIMARY KEY,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id),
+    product_id INTEGER REFERENCES product(id),
+    quantity DECIMAL,
+    unit_cost DECIMAL,
+    total DECIMAL
+);
+
+-- =========================
+-- GOODS RECEIPTS
+-- =========================
+CREATE TABLE goods_receipts (
+    id SERIAL PRIMARY KEY,
+    receipt_number TEXT UNIQUE,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id),
+    location_id INTEGER REFERENCES location(id),
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE goods_receipt_items (
+    id SERIAL PRIMARY KEY,
+    goods_receipt_id INTEGER REFERENCES goods_receipts(id),
+    product_id INTEGER REFERENCES product(id),
+    quantity_received DECIMAL,
+    unit_cost DECIMAL,
+    total DECIMAL
+);

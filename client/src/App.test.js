@@ -1,8 +1,22 @@
-import { render, screen } from '@testing-library/react';
-import App from './App';
+import { render, screen, waitFor } from "@testing-library/react";
+import App from "./App";
 
-test('renders learn react link', () => {
+beforeEach(() => {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: async () => "[]",
+  });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+test("renders admin shell and categories after redirect", async () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByText(/digitalether/i)).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getByRole("heading", { name: /categories/i })).toBeInTheDocument();
+  });
 });

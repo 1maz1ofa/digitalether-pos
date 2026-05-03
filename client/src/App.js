@@ -1,19 +1,24 @@
-import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { AdminLayout } from "./layout/AdminLayout";
+import { CategoriesPage } from "./pages/CategoriesPage";
+import { CustomersPage } from "./pages/CustomersPage";
+import { LocationsPage } from "./pages/LocationsPage";
+import { ProductsPage } from "./pages/ProductsPage";
+import "./App.css";
 
 function App() {
-  const [message, setMessage] = useState("");
-
-  useEffect(() => {
-    fetch("/")
-      .then(res => res.json())
-      .then(data => setMessage(data.message));
-  }, []);
-
   return (
-    <div>
-      <h1>React Client</h1>
-      <p>{message}</p>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<AdminLayout />}>
+          <Route index element={<Navigate to="/categories" replace />} />
+          <Route path="categories" element={<CategoriesPage />} />
+          <Route path="locations" element={<LocationsPage />} />
+          <Route path="products" element={<ProductsPage />} />
+          <Route path="customers" element={<CustomersPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   );
 }
 
