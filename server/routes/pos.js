@@ -71,6 +71,16 @@ router.post("/checkout", async (req, res) => {
     return res.status(400).json({ error: "items must be a non-empty array" });
   }
 
+  const saleType = req.body?.sale_type;
+  if (saleType === "htb") {
+    const d365AppId = req.body?.d365_credit_application_id;
+    if (d365AppId === undefined || d365AppId === null || String(d365AppId).trim() === "") {
+      return res.status(400).json({
+        error: "HTB checkout requires a selected credit application (customer).",
+      });
+    }
+  }
+
   const client = await pool.connect();
   try {
     if (customerId !== null) {

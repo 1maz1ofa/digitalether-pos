@@ -143,6 +143,8 @@ export function PosPage() {
   const [d365Error, setD365Error] = useState("");
   const [d365Meta, setD365Meta] = useState(null);
   const [htbCreditSelection, setHtbCreditSelection] = useState(null);
+  /** When false, search + table are hidden so the catalog gets vertical space; user can reopen via the header toggle. */
+  const [d365CreditAppsListExpanded, setD365CreditAppsListExpanded] = useState(true);
 
   const filteredD365CreditRecords = useMemo(
     () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
@@ -203,11 +205,15 @@ export function PosPage() {
   useEffect(() => {
     if (saleType !== "htb") {
       setHtbCreditSelection(null);
+      setD365CreditAppsListExpanded(true);
       return;
     }
     const stored = readStoredHtbCreditSelection();
     if (stored) {
       setHtbCreditSelection(stored);
+      setD365CreditAppsListExpanded(false);
+    } else {
+      setD365CreditAppsListExpanded(true);
     }
   }, [saleType]);
 
@@ -390,6 +396,9 @@ export function PosPage() {
 
   const cartLines = useMemo(() => Array.from(cart.values()), [cart]);
 
+  const htbNeedsCustomerSelection =
+    saleType === "htb" && !htbCreditSelection?.creditApplicationId;
+
   const subtotal = useMemo(
     () =>
       cartLines.reduce((sum, line) => {
@@ -457,6 +466,10 @@ export function PosPage() {
   }
 
   function beginAddProduct(product) {
+    if (htbNeedsCustomerSelection) {
+      setError("Select an HTB customer (credit application) before adding products.");
+      return;
+    }
     if (multiStore) {
       setError("");
       setPickStoreId("");
@@ -467,6 +480,11 @@ export function PosPage() {
   }
 
   function confirmPickStore() {
+    if (htbNeedsCustomerSelection) {
+      setPickProduct(null);
+      setError("Select an HTB customer (credit application) before adding products.");
+      return;
+    }
     if (!pickProduct) return;
     const loc = parseInt(pickStoreId, 10);
     if (!Number.isInteger(loc) || loc < 1) {
@@ -519,6 +537,10 @@ export function PosPage() {
         !Number.isInteger(posSettings.defaultLocationId))
     ) {
       setError("Default branch is not configured on the server (BRANCH_ID or branch_id).");
+      return;
+    }
+    if (htbNeedsCustomerSelection) {
+      setError("Select an HTB customer (credit application) before checkout.");
       return;
     }
     if (cartLines.length === 0) {
@@ -650,18 +672,59 @@ export function PosPage() {
 
         {saleType === "htb" ? (
         <section className="card pos-d365-credit" aria-labelledby="pos-d365-credit-heading">
+          {d365Records.length > 0 ? (
+            <button
+              type="button"
+              className="pos-d365-credit-collapse-tab"
+              aria-expanded={d365CreditAppsListExpanded}
+              aria-controls="pos-d365-credit-apps-panel"
+              aria-label={
+                d365CreditAppsListExpanded ? "Hide credit applications list" : "Show credit applications list"
+              }
+              title={
+                d365CreditAppsListExpanded ? "Hide credit applications list" : "Show credit applications list"
+              }
+              onClick={() => setD365CreditAppsListExpanded((v) => !v)}
+            >
+              <span className="pos-d365-credit-collapse-tab-icon" aria-hidden>
+                {d365CreditAppsListExpanded ? (
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M6 15l6-6 6 6"
+                      stroke="currentColor"
+                      strokeWidth="2.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M6 9l6 6 6-6"
+                      stroke="currentColor"
+                      strokeWidth="2.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </span>
+            </button>
+          ) : null}
           <div className="pos-d365-credit-head">
             <h2 id="pos-d365-credit-heading" className="pos-d365-credit-title">
               Credit applications
             </h2>
-            <button
-              type="button"
-              className="btn btn-secondary pos-d365-refresh"
-              onClick={() => loadD365CreditApps()}
-              disabled={d365Loading}
-            >
-              {d365Loading ? "Refreshing…" : "Refresh"}
-            </button>
+            <div className="pos-d365-credit-head-actions">
+              <button
+                type="button"
+                className="btn btn-secondary pos-d365-refresh"
+                onClick={() => loadD365CreditApps()}
+                disabled={d365Loading}
+              >
+                {d365Loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
           </div>
           {d365Meta ? (
             <p className="muted pos-d365-meta">
@@ -691,8 +754,14 @@ export function PosPage() {
           {d365Loading && !d365Records.length ? (
             <p className="muted">Loading from Dynamics 365…</p>
           ) : null}
+          {!d365CreditAppsListExpanded && htbCreditSelection?.creditApplicationId ? (
+            <p className="muted pos-d365-collapse-hint" role="status">
+              Application list is hidden. Use the chevron at the top of this section to show the list and pick a
+              different application.
+            </p>
+          ) : null}
           {d365Records.length > 0 ? (
-            <>
+            <div id="pos-d365-credit-apps-panel" hidden={!d365CreditAppsListExpanded}>
               <div className="pos-d365-toolbar">
                 <input
                   className="input pos-search pos-d365-search"
@@ -769,6 +838,7 @@ export function PosPage() {
                                 };
                                 setHtbCreditSelection(sel);
                                 persistHtbCreditSelection(sel);
+                                setD365CreditAppsListExpanded(false);
                               }}
                             >
                               {selected ? "Selected" : "Select"}
@@ -781,7 +851,7 @@ export function PosPage() {
                   </table>
                 </div>
               )}
-            </>
+            </div>
           ) : null}
         </section>
         ) : null}
@@ -844,6 +914,7 @@ export function PosPage() {
                         key={p.id}
                         type="button"
                         className="pos-product-tile"
+                        disabled={htbNeedsCustomerSelection}
                         onClick={() => beginAddProduct(p)}
                       >
                         <span className="pos-product-name">{p.name}</span>
@@ -864,6 +935,7 @@ export function PosPage() {
                   key={p.id}
                   type="button"
                   className="pos-product-tile"
+                  disabled={htbNeedsCustomerSelection}
                   onClick={() => beginAddProduct(p)}
                 >
                   <span className="pos-product-name">{p.name}</span>
@@ -893,6 +965,7 @@ export function PosPage() {
                       onClick={() => {
                         setHtbCreditSelection(null);
                         persistHtbCreditSelection(null);
+                        setD365CreditAppsListExpanded(true);
                       }}
                     >
                       Clear
@@ -954,7 +1027,11 @@ export function PosPage() {
 
             <div className="pos-cart-lines">
               {cartLines.length === 0 ? (
-                <p className="muted">Cart is empty. Tap a product to add.</p>
+                <p className="muted">
+                  {htbNeedsCustomerSelection
+                    ? "Select an HTB customer above, then add products from the catalog."
+                    : "Cart is empty. Tap a product to add."}
+                </p>
               ) : (
                 cartLines.map((line) => (
                   <div key={line.cart_key} className="pos-line">
@@ -1020,7 +1097,7 @@ export function PosPage() {
                       (posSettings == null ||
                         posSettings.defaultLocationId == null ||
                         !Number.isInteger(posSettings.defaultLocationId))) ||
-                    (saleType === "htb" && !htbCreditSelection?.creditApplicationId)
+                    htbNeedsCustomerSelection
                   }
                   onClick={handleCheckout}
                 >
@@ -1041,7 +1118,12 @@ export function PosPage() {
             <button type="button" className="btn btn-secondary" onClick={() => setPickProduct(null)}>
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={confirmPickStore}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={htbNeedsCustomerSelection}
+              onClick={confirmPickStore}
+            >
               Add to cart
             </button>
           </>

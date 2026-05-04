@@ -539,12 +539,65 @@ code {
   padding: 0.85rem 1rem;
 }
 
+.pos-d365-credit-collapse-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% + 2rem);
+  margin: -0.85rem -1rem 0.65rem;
+  padding: 0.5rem 0.5rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  background: var(--overlay-subtle);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.pos-d365-credit-collapse-tab:hover {
+  background: var(--overlay-subtle-hover);
+  color: var(--text);
+}
+
+.pos-d365-credit-collapse-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pos-d365-credit-collapse-tab-icon {
+  display: flex;
+  line-height: 0;
+  color: inherit;
+}
+
+.pos-d365-credit-collapse-tab-icon svg {
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35));
+}
+
+[data-theme="light"] .pos-d365-credit-collapse-tab-icon svg {
+  filter: drop-shadow(0 1px 0 rgba(15, 23, 42, 0.14));
+}
+
 .pos-d365-credit-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.pos-d365-credit-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pos-d365-collapse-hint {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
 }
 
 .pos-d365-credit-title {
