@@ -8,16 +8,53 @@ function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+/** Integer location id from BRANCH_ID or branch_id in .env; null if unset or invalid. */
+function defaultLocationIdFromEnv() {
+  const raw = process.env.BRANCH_ID ?? process.env.branch_id;
+  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+  const id = parseInt(String(raw).trim(), 10);
+  if (!Number.isInteger(id) || id < 1) return null;
+  return id;
+}
+
+/** Optional display label for the POS branch (header, receipts); not required for checkout. */
+function branchDisplayNameFromEnv() {
+  const raw = process.env.BRANCH_NAME ?? process.env.D365_BRANCH_NAME;
+  if (raw === undefined || raw === null) return null;
+  const s = String(raw).trim();
+  return s === "" ? null : s;
+}
+
+router.get("/settings", (req, res) => {
+  res.json({
+    defaultLocationId: defaultLocationIdFromEnv(),
+    branchName: branchDisplayNameFromEnv(),
+  });
+});
+
 /**
  * POST /api/pos/checkout
- * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }] }
- * Each line may include location_id; otherwise body.location_id is used as the default.
+ * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }],
+ *   optional HTB / D365: d365_credit_application_id?, d365_customer_guid?, d365_minimum_deposit? (ignored until persisted) }
+ * Each line may include location_id; otherwise body.location_id or BRANCH_ID/branch_id env is used as the default.
  * Lines are grouped by resolved location: one completed invoice per distinct location.
  */
 router.post("/checkout", async (req, res) => {
   const defaultLocationRaw = req.body?.location_id;
-  const defaultLocationId = parseInt(defaultLocationRaw, 10);
-  const hasDefaultLocation = Number.isInteger(defaultLocationId) && defaultLocationId >= 1;
+  let resolvedDefaultLocationId = null;
+  if (defaultLocationRaw !== undefined && defaultLocationRaw !== null && defaultLocationRaw !== "") {
+    const parsed = parseInt(defaultLocationRaw, 10);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      return res.status(400).json({ error: "Invalid location_id" });
+    }
+    resolvedDefaultLocationId = parsed;
+  } else {
+    resolvedDefaultLocationId = defaultLocationIdFromEnv();
+  }
+  const hasDefaultLocation =
+    resolvedDefaultLocationId != null &&
+    Number.isInteger(resolvedDefaultLocationId) &&
+    resolvedDefaultLocationId >= 1;
 
   let customerId = null;
   const rawCustomer = req.body?.customer_id;
@@ -65,7 +102,7 @@ router.post("/checkout", async (req, res) => {
         }
         lineLocationId = loc;
       } else if (hasDefaultLocation) {
-        lineLocationId = defaultLocationId;
+        lineLocationId = resolvedDefaultLocationId;
       } else {
         return res.status(400).json({
           error: "location_id is required on the sale or on each line item",

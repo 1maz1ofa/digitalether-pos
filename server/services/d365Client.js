@@ -11,7 +11,8 @@
  *           D365_BRANCH_NAME_COLUMN (name column on branch table; default htb365_name),
  *           D365_BRANCH_ID (legacy: GUID — _htb365_branch_value eq guid when D365_BRANCH_NAME is unset),
  *           D365_CREDIT_BRANCH_LOOKUP (legacy OData FK; default _htb365_branch_value),
- *           D365_BRANCH_ENTITY_SET (Web API set for branch row lookup by id; default htb365_branches; falls back to htb365_branch on 404)
+ *           D365_BRANCH_ENTITY_SET (Web API set for branch row lookup by id; default htb365_branches; falls back to htb365_branch on 404),
+ *           D365_CREDIT_CUSTOMER_LOOKUP (OData FK attribute for customer GUID on credit app; default _htb365_customer_value)
  */
 
 const DATAVERSE_API_VERSION = "v9.2";
@@ -522,6 +523,48 @@ function pickBranchNameFromCreditRow(row, branchNavResolved = null) {
   return pickBranchNameFromDataverseRow(br, nameCol);
 }
 
+function isDataverseGuidString(s) {
+  return (
+    typeof s === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      s.trim()
+    )
+  );
+}
+
+/**
+ * Customer record id in D365 (htb365_customer or related), for POS / downstream use.
+ */
+function pickCustomer365Guid(row, customer) {
+  if (!row || typeof row !== "object") return null;
+  const configured = requireEnv("D365_CREDIT_CUSTOMER_LOOKUP");
+  if (configured && isDataverseGuidString(String(row[configured] ?? ""))) {
+    return String(row[configured]).trim();
+  }
+  const defaultFk = "_htb365_customer_value";
+  if (row[defaultFk] && isDataverseGuidString(String(row[defaultFk]))) {
+    return String(row[defaultFk]).trim();
+  }
+  const fkKey = Object.keys(row).find(
+    (k) =>
+      k.endsWith("_value") &&
+      /customer/i.test(k) &&
+      isDataverseGuidString(String(row[k] ?? ""))
+  );
+  if (fkKey) return String(row[fkKey]).trim();
+
+  if (customer && typeof customer === "object" && !Array.isArray(customer)) {
+    for (const k of Object.keys(customer)) {
+      if (k.includes("@")) continue;
+      const v = customer[k];
+      if (typeof v === "string" && isDataverseGuidString(v) && /id$/i.test(k)) {
+        return v.trim();
+      }
+    }
+  }
+  return null;
+}
+
 function pickExpandedCustomer(row, navNames) {
   if (!row || typeof row !== "object") return null;
   if (Array.isArray(navNames) && navNames.length) {
@@ -575,6 +618,7 @@ function mapRecord(row, { customerNavNames } = {}) {
       customer?.htb365_lastname ?? customer?.lastname ?? null,
     customerNationalId: customer?.htb365_nationalid ?? null,
     customerAddress: customer?.htb365_address ?? null,
+    customer365Guid: pickCustomer365Guid(row, customer),
     minimumDeposit: row.htb365_minimumdeposit ?? null,
     installmentAmount: row.htb365_approvedcredit ?? null,
     fields: row,

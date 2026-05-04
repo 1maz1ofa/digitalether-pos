@@ -468,6 +468,35 @@ code {
   margin-bottom: 1rem;
 }
 
+.pos-page-header-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.pos-page-header-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.pos-page-header-title-row h1 {
+  margin-bottom: 0.35rem;
+}
+
+.pos-header-branch {
+  margin-left: auto;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text, inherit);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-width: min(100%, 22rem);
+}
+
 .pos-receipt {
   background: var(--receipt-bg);
   border-color: var(--receipt-border);
@@ -590,6 +619,165 @@ code {
 .pos-d365-address {
   max-width: 14rem;
   word-break: break-word;
+}
+
+.pos-d365-col-actions {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: right;
+}
+
+.pos-d365-row--selected {
+  background: var(--nav-active-bg, rgba(99, 102, 241, 0.12));
+}
+
+.pos-d365-row--selected td {
+  border-bottom-color: var(--border);
+}
+
+/* HTB credit table: explicit choose-this-row CTA */
+.pos-d365-select-btn {
+  font-weight: 600;
+  min-width: 5.5rem;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  color: #f0fdf4;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
+}
+
+.pos-d365-select-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #4ade80 0%, #22c55e 100%);
+  color: #052e16;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.pos-d365-select-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), 0 1px 0 rgba(255, 255, 255, 0.12) inset;
+}
+
+.pos-d365-select-btn--selected {
+  background: rgba(22, 163, 74, 0.22);
+  color: #bbf7d0;
+  border-color: rgba(74, 222, 128, 0.55);
+  box-shadow: none;
+}
+
+.pos-d365-select-btn--selected:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.32);
+  color: #ecfdf5;
+  border-color: rgba(74, 222, 128, 0.75);
+}
+
+[data-theme="light"] .pos-d365-select-btn {
+  background: linear-gradient(180deg, #16a34a 0%, #15803d 100%);
+  color: #ffffff;
+}
+
+[data-theme="light"] .pos-d365-select-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  color: #ffffff;
+}
+
+[data-theme="light"] .pos-d365-select-btn--selected {
+  background: rgba(22, 163, 74, 0.14);
+  color: #14532d;
+  border-color: rgba(22, 163, 74, 0.45);
+}
+
+[data-theme="light"] .pos-d365-select-btn--selected:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.22);
+  color: #052e16;
+}
+
+.pos-htb-selection {
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: var(--overlay-subtle, transparent);
+}
+
+.pos-htb-selection--active {
+  border-style: solid;
+}
+
+.pos-htb-selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.pos-htb-selection-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.pos-htb-selection-clear {
+  flex-shrink: 0;
+}
+
+.pos-htb-selection-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.pos-htb-selection-body .pos-htb-selection-meta {
+  margin: 0;
+}
+
+.pos-htb-selection-body .pos-htb-selection-name {
+  margin: 0;
+}
+
+.pos-htb-selection-name {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.pos-htb-selection-empty {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.pos-htb-selection-meta {
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.pos-htb-selection-meta dt {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pos-htb-selection-meta dd {
+  margin: 0.15rem 0 0;
+}
+
+.pos-htb-selection-meta--amounts {
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 1rem;
+}
+
+.pos-htb-guid {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
 }
 
 .pos-main-columns {

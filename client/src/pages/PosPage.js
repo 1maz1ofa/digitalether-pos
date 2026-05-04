@@ -3,6 +3,55 @@ import { api } from "../api";
 import { Modal } from "../components/Modal";
 
 const MULTI_STORE_STORAGE_KEY = "de-pos-multi-store";
+const HTB_CREDIT_SELECTION_STORAGE_KEY = "de-pos-htb-credit-selection";
+
+function readStoredHtbCreditSelection() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(HTB_CREDIT_SELECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object" || o.creditApplicationId == null || o.creditApplicationId === "") {
+      return null;
+    }
+    return {
+      creditApplicationId: String(o.creditApplicationId),
+      customer365Guid: o.customer365Guid != null && String(o.customer365Guid).trim() !== ""
+        ? String(o.customer365Guid).trim()
+        : null,
+      customerDisplayName:
+        o.customerDisplayName != null && String(o.customerDisplayName).trim() !== ""
+          ? String(o.customerDisplayName).trim()
+          : "Customer",
+      minimumDeposit:
+        o.minimumDeposit === "" || o.minimumDeposit === undefined ? null : o.minimumDeposit,
+      installmentAmount:
+        o.installmentAmount === "" || o.installmentAmount === undefined ? null : o.installmentAmount,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistHtbCreditSelection(sel) {
+  try {
+    if (!sel) {
+      window.localStorage.removeItem(HTB_CREDIT_SELECTION_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(HTB_CREDIT_SELECTION_STORAGE_KEY, JSON.stringify(sel));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatHtbCreditCustomerName(row) {
+  const parts = [row.customerFirstName, row.customerLastName]
+    .filter((x) => x != null && String(x).trim() !== "")
+    .map((x) => String(x).trim());
+  const joined = parts.join(" ").trim();
+  return joined || "Customer";
+}
 
 function money(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -78,7 +127,7 @@ export function PosPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [locationId, setLocationId] = useState("");
+  const [posSettings, setPosSettings] = useState(null);
   const [customerId, setCustomerId] = useState("");
   const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
@@ -93,6 +142,7 @@ export function PosPage() {
   const [d365Loading, setD365Loading] = useState(false);
   const [d365Error, setD365Error] = useState("");
   const [d365Meta, setD365Meta] = useState(null);
+  const [htbCreditSelection, setHtbCreditSelection] = useState(null);
 
   const filteredD365CreditRecords = useMemo(
     () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
@@ -103,14 +153,16 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const [p, loc, cust] = await Promise.all([
+      const [p, loc, cust, settings] = await Promise.all([
         api.products.list(),
         api.locations.list(),
         api.customers.list(),
+        api.pos.settings(),
       ]);
       setProducts(p);
       setLocations(loc.filter((l) => l.is_active !== false));
       setCustomers(cust);
+      setPosSettings(settings);
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally {
@@ -149,10 +201,48 @@ export function PosPage() {
   }, [saleType, loadD365CreditApps]);
 
   useEffect(() => {
-    if (!locationId && locations.length) {
-      setLocationId(String(locations[0].id));
+    if (saleType !== "htb") {
+      setHtbCreditSelection(null);
+      return;
     }
-  }, [locations, locationId]);
+    const stored = readStoredHtbCreditSelection();
+    if (stored) {
+      setHtbCreditSelection(stored);
+    }
+  }, [saleType]);
+
+  useEffect(() => {
+    if (saleType !== "htb" || !d365Records.length) return;
+    setHtbCreditSelection((prev) => {
+      if (!prev?.creditApplicationId) return prev;
+      const row = d365Records.find((r) => String(r?.id) === String(prev.creditApplicationId));
+      if (!row) return prev;
+      const customerDisplayName = formatHtbCreditCustomerName(row);
+      const next = {
+        ...prev,
+        customerDisplayName,
+        minimumDeposit: row.minimumDeposit ?? prev.minimumDeposit,
+        installmentAmount: row.installmentAmount ?? prev.installmentAmount,
+        customer365Guid: row.customer365Guid ?? prev.customer365Guid,
+      };
+      if (
+        next.customerDisplayName === prev.customerDisplayName &&
+        next.minimumDeposit === prev.minimumDeposit &&
+        next.installmentAmount === prev.installmentAmount &&
+        next.customer365Guid === prev.customer365Guid
+      ) {
+        return prev;
+      }
+      persistHtbCreditSelection(next);
+      return next;
+    });
+  }, [saleType, d365Records]);
+
+  useEffect(() => {
+    if (saleType === "htb") {
+      setCustomerId("");
+    }
+  }, [saleType]);
 
   const locationNameById = useMemo(() => {
     const m = new Map();
@@ -162,6 +252,24 @@ export function PosPage() {
     return m;
   }, [locations]);
 
+  const headerBranchName = useMemo(() => {
+    const fromEnv =
+      posSettings?.branchName != null && String(posSettings.branchName).trim() !== ""
+        ? String(posSettings.branchName).trim()
+        : null;
+    if (fromEnv) return fromEnv;
+    const locId = posSettings?.defaultLocationId;
+    if (locId != null && Number.isInteger(locId) && locId >= 1) {
+      const fromList = locationNameById.get(locId);
+      if (fromList) return fromList;
+    }
+    const fromD365 =
+      d365Meta?.branchName != null && String(d365Meta.branchName).trim() !== ""
+        ? String(d365Meta.branchName).trim()
+        : null;
+    return fromD365;
+  }, [posSettings, locationNameById, d365Meta]);
+
   function applyMultiStore(nextMulti) {
     try {
       window.localStorage.setItem(MULTI_STORE_STORAGE_KEY, nextMulti ? "1" : "0");
@@ -170,10 +278,7 @@ export function PosPage() {
     }
     setMultiStore(nextMulti);
     setPickProduct(null);
-    const fallbackLoc =
-      (locationId && parseInt(locationId, 10)) ||
-      (locations[0] && locations[0].id) ||
-      null;
+    const fallbackLoc = (locations[0] && locations[0].id) || null;
 
     setCart((prev) => {
       if (nextMulti) {
@@ -354,7 +459,7 @@ export function PosPage() {
   function beginAddProduct(product) {
     if (multiStore) {
       setError("");
-      setPickStoreId(locationId || (locations[0] ? String(locations[0].id) : ""));
+      setPickStoreId("");
       setPickProduct(product);
     } else {
       addToCart(product);
@@ -408,8 +513,12 @@ export function PosPage() {
     setError("");
     setLastReceipt(null);
     setCompletedSaleTypeLabel(null);
-    if (!locationId) {
-      setError("Select a location.");
+    if (
+      !multiStore &&
+      (posSettings?.defaultLocationId == null ||
+        !Number.isInteger(posSettings.defaultLocationId))
+    ) {
+      setError("Default branch is not configured on the server (BRANCH_ID or branch_id).");
       return;
     }
     if (cartLines.length === 0) {
@@ -423,14 +532,25 @@ export function PosPage() {
     setCheckoutLoading(true);
     try {
       const payload = {
-        location_id: parseInt(locationId, 10),
-        customer_id: customerId === "" ? null : parseInt(customerId, 10),
+        customer_id:
+          saleType === "htb"
+            ? null
+            : customerId === ""
+              ? null
+              : parseInt(customerId, 10),
         sale_type: saleType,
         items: cartLines.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
           ...(multiStore ? { location_id: l.location_id } : {}),
         })),
+        ...(saleType === "htb" && htbCreditSelection?.creditApplicationId
+          ? {
+              d365_credit_application_id: htbCreditSelection.creditApplicationId,
+              d365_customer_guid: htbCreditSelection.customer365Guid,
+              d365_minimum_deposit: htbCreditSelection.minimumDeposit,
+            }
+          : {}),
       };
       const result = await api.pos.checkout(payload);
       setCompletedSaleTypeLabel(saleTypeLabel(saleType));
@@ -446,8 +566,15 @@ export function PosPage() {
   return (
     <div className="page pos-page">
       <header className="page-header">
-        <div>
-          <h1>Point of sale</h1>
+        <div className="pos-page-header-block">
+          <div className="pos-page-header-title-row">
+            <h1>Point of sale</h1>
+            {headerBranchName ? (
+              <span className="pos-header-branch" title="Branch">
+                {headerBranchName}
+              </span>
+            ) : null}
+          </div>
           <p className="page-lead">Ring up sales; totals use catalog prices at checkout.</p>
         </div>
       </header>
@@ -591,11 +718,22 @@ export function PosPage() {
                         <th scope="col">Installment amount</th>
                         <th scope="col">Status</th>
                         <th scope="col">Approved date</th>
+                        <th scope="col" className="pos-d365-col-actions">
+                          Actions
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredD365CreditRecords.map((row) => (
-                        <tr key={row.id || JSON.stringify(row.fields)}>
+                      {filteredD365CreditRecords.map((row) => {
+                        const selected =
+                          htbCreditSelection &&
+                          row.id != null &&
+                          String(htbCreditSelection.creditApplicationId) === String(row.id);
+                        return (
+                        <tr
+                          key={row.id || JSON.stringify(row.fields)}
+                          className={selected ? "pos-d365-row--selected" : undefined}
+                        >
                           <td>{row.customerFirstName != null && row.customerFirstName !== "" ? String(row.customerFirstName) : "—"}</td>
                           <td>{row.customerLastName != null && row.customerLastName !== "" ? String(row.customerLastName) : "—"}</td>
                           <td>{row.customerNationalId != null && row.customerNationalId !== "" ? String(row.customerNationalId) : "—"}</td>
@@ -610,8 +748,35 @@ export function PosPage() {
                               ? new Date(row.approvedDate).toLocaleString()
                               : "—"}
                           </td>
+                          <td className="pos-d365-col-actions">
+                            <button
+                              type="button"
+                              className={
+                                selected
+                                  ? "btn btn-sm pos-d365-select-btn pos-d365-select-btn--selected"
+                                  : "btn btn-sm pos-d365-select-btn"
+                              }
+                              onClick={() => {
+                                const sel = {
+                                  creditApplicationId: String(row.id),
+                                  customer365Guid:
+                                    row.customer365Guid != null && String(row.customer365Guid).trim() !== ""
+                                      ? String(row.customer365Guid).trim()
+                                      : null,
+                                  customerDisplayName: formatHtbCreditCustomerName(row),
+                                  minimumDeposit: row.minimumDeposit ?? null,
+                                  installmentAmount: row.installmentAmount ?? null,
+                                };
+                                setHtbCreditSelection(sel);
+                                persistHtbCreditSelection(sel);
+                              }}
+                            >
+                              {selected ? "Selected" : "Select"}
+                            </button>
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -714,38 +879,78 @@ export function PosPage() {
 
           <aside className="card pos-cart">
             <h2 className="pos-cart-title">Current sale</h2>
-            <label className="field">
-              <span className="field-label">
-                {multiStore ? "Default store (when adding)" : "Location"}
-              </span>
-              <select
-                className="input"
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
+            {saleType === "htb" ? (
+              <div
+                className={`pos-htb-selection${htbCreditSelection ? " pos-htb-selection--active" : ""}`}
+                aria-live="polite"
               >
-                <option value="">— Select —</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={String(l.id)}>
-                    {l.name || l.code || `Location #${l.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span className="field-label">Customer (optional)</span>
-              <select
-                className="input"
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-              >
-                <option value="">Walk-in</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name || `Customer #${c.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <div className="pos-htb-selection-head">
+                  <span className="pos-htb-selection-label">HTB customer</span>
+                  {htbCreditSelection ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm pos-htb-selection-clear"
+                      onClick={() => {
+                        setHtbCreditSelection(null);
+                        persistHtbCreditSelection(null);
+                      }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                {htbCreditSelection ? (
+                  <div className="pos-htb-selection-body">
+                    <dl className="pos-htb-selection-meta">
+                      <div>
+                        <dt>ID</dt>
+                        <dd>
+                          {htbCreditSelection.customer365Guid ? (
+                            <code className="pos-htb-guid" title={htbCreditSelection.customer365Guid}>
+                              {htbCreditSelection.customer365Guid}
+                            </code>
+                          ) : (
+                            <span className="muted">Not available from API</span>
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="pos-htb-selection-name">{htbCreditSelection.customerDisplayName}</p>
+                    <dl className="pos-htb-selection-meta pos-htb-selection-meta--amounts">
+                      <div>
+                        <dt>Minimum deposit</dt>
+                        <dd>{money(htbCreditSelection.minimumDeposit)}</dd>
+                      </div>
+                      <div>
+                        <dt>Installment amount</dt>
+                        <dd>{money(htbCreditSelection.installmentAmount)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                ) : (
+                  <p className="muted pos-htb-selection-empty">
+                    Select a credit application above to attach this sale to a D365 customer and minimum deposit.
+                  </p>
+                )}
+              </div>
+            ) : null}
+            {saleType !== "htb" ? (
+              <label className="field">
+                <span className="field-label">Customer (optional)</span>
+                <select
+                  className="input"
+                  value={customerId}
+                  onChange={(e) => setCustomerId(e.target.value)}
+                >
+                  <option value="">Walk-in</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.name || `Customer #${c.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
 
             <div className="pos-cart-lines">
               {cartLines.length === 0 ? (
@@ -808,7 +1013,14 @@ export function PosPage() {
                   type="button"
                   className="btn btn-primary pos-pay"
                   disabled={
-                    !locationId || cartLines.length === 0 || checkoutLoading || loading
+                    cartLines.length === 0 ||
+                    checkoutLoading ||
+                    loading ||
+                    (!multiStore &&
+                      (posSettings == null ||
+                        posSettings.defaultLocationId == null ||
+                        !Number.isInteger(posSettings.defaultLocationId))) ||
+                    (saleType === "htb" && !htbCreditSelection?.creditApplicationId)
                   }
                   onClick={handleCheckout}
                 >
