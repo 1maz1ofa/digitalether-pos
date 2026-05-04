@@ -84,4 +84,10 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+  d365: {
+    finalApprovedCreditApplications: (top = 200) =>
+      apiRequest(
+        `/api/d365/credit-applications/final-approved?top=${encodeURIComponent(String(top))}`
+      ),
+  },
 };

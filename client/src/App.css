@@ -10,6 +10,53 @@
   --danger-hover: #dc2626;
   --radius: 10px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  --overlay-subtle: rgba(255, 255, 255, 0.06);
+  --overlay-subtle-hover: rgba(255, 255, 255, 0.1);
+  --overlay-faint: rgba(255, 255, 255, 0.02);
+  --nav-active-bg: rgba(59, 130, 246, 0.15);
+  --focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  --danger-bg: rgba(239, 68, 68, 0.12);
+  --danger-border: rgba(239, 68, 68, 0.35);
+  --danger-text: #fca5a5;
+  --modal-backdrop: rgba(0, 0, 0, 0.55);
+  --table-header-bg: rgba(0, 0, 0, 0.2);
+  --primary-chip-border: rgba(59, 130, 246, 0.45);
+  --primary-soft-hover: rgba(59, 130, 246, 0.08);
+  --receipt-bg: rgba(59, 130, 246, 0.12);
+  --receipt-border: rgba(59, 130, 246, 0.35);
+  --receipt-text: #bfdbfe;
+  --code-bg: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f1f5f9;
+  --bg-elevated: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  --overlay-subtle: rgba(15, 23, 42, 0.06);
+  --overlay-subtle-hover: rgba(15, 23, 42, 0.1);
+  --overlay-faint: rgba(15, 23, 42, 0.03);
+  --nav-active-bg: rgba(37, 99, 235, 0.12);
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  --danger-bg: rgba(239, 68, 68, 0.1);
+  --danger-border: rgba(220, 38, 38, 0.35);
+  --danger-text: #b91c1c;
+  --modal-backdrop: rgba(15, 23, 42, 0.45);
+  --table-header-bg: rgba(15, 23, 42, 0.05);
+  --primary-chip-border: rgba(37, 99, 235, 0.45);
+  --primary-soft-hover: rgba(37, 99, 235, 0.1);
+  --receipt-bg: rgba(37, 99, 235, 0.1);
+  --receipt-border: rgba(37, 99, 235, 0.28);
+  --receipt-text: #1e40af;
+  --code-bg: rgba(15, 23, 42, 0.06);
+  color-scheme: light;
 }
 
 .admin-shell {
@@ -93,12 +140,35 @@
 
 .admin-nav-link:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-subtle);
 }
 
 .admin-nav-link--active {
   color: var(--text);
-  background: rgba(59, 130, 246, 0.15);
+  background: var(--nav-active-bg);
+}
+
+.theme-toggle {
+  margin-left: 0.35rem;
+  flex-shrink: 0;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.theme-toggle:hover:not(:disabled) .theme-toggle-icon {
+  color: var(--text);
+}
+
+.theme-toggle-label {
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .admin-main {
@@ -169,7 +239,7 @@
 }
 
 .data-table tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--overlay-faint);
 }
 
 .col-actions {
@@ -226,19 +296,19 @@
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-subtle);
   color: var(--text);
   border-color: var(--border);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--overlay-subtle-hover);
 }
 
 .btn-danger {
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.35);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
 }
 
 .btn-danger:hover:not(:disabled) {
@@ -273,15 +343,15 @@
 }
 
 .alert-error {
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  color: #fecaca;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
 }
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -379,7 +449,7 @@
 .input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: var(--focus-ring);
 }
 
 .textarea {
@@ -389,7 +459,7 @@
 
 code {
   font-size: 0.85em;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--code-bg);
   padding: 0.15rem 0.35rem;
   border-radius: 4px;
 }
@@ -399,9 +469,9 @@ code {
 }
 
 .pos-receipt {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.35);
-  color: #bfdbfe;
+  background: var(--receipt-bg);
+  border-color: var(--receipt-border);
+  color: var(--receipt-text);
 }
 
 .pos-shell {
@@ -434,6 +504,92 @@ code {
   text-transform: uppercase;
   color: var(--muted);
   width: auto;
+}
+
+.pos-d365-credit {
+  padding: 0.85rem 1rem;
+}
+
+.pos-d365-credit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pos-d365-credit-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pos-d365-meta {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+}
+
+.pos-d365-error {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: var(--danger-text);
+}
+
+.pos-d365-toolbar {
+  margin-top: 0.75rem;
+}
+
+.pos-d365-search {
+  width: 100%;
+  max-width: 28rem;
+}
+
+.pos-d365-filter-empty {
+  margin: 0.65rem 0 0;
+}
+
+.pos-d365-table-wrap {
+  margin-top: 0.75rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.pos-d365-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.pos-d365-table th,
+.pos-d365-table td {
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.pos-d365-table th {
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--table-header-bg);
+}
+
+.pos-d365-table tr:last-child td {
+  border-bottom: none;
+}
+
+.pos-d365-date {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.pos-d365-id {
+  font-size: 0.8rem;
+}
+
+.pos-d365-address {
+  max-width: 14rem;
+  word-break: break-word;
 }
 
 .pos-main-columns {
@@ -510,13 +666,13 @@ code {
 
 .pos-category-chip:hover {
   color: var(--text);
-  border-color: rgba(59, 130, 246, 0.45);
+  border-color: var(--primary-chip-border);
 }
 
 .pos-category-chip--active {
   color: var(--text);
   border-color: var(--primary);
-  background: rgba(59, 130, 246, 0.15);
+  background: var(--nav-active-bg);
 }
 
 .pos-product-groups {
@@ -579,7 +735,7 @@ code {
 
 .pos-product-tile:hover {
   border-color: var(--primary);
-  background: rgba(59, 130, 246, 0.08);
+  background: var(--primary-soft-hover);
 }
 
 .pos-product-name {
@@ -680,7 +836,7 @@ code {
   padding: 0.35rem 0.85rem;
   border-radius: 999px;
   border: 1px solid var(--primary);
-  background: rgba(59, 130, 246, 0.15);
+  background: var(--nav-active-bg);
   color: var(--text);
   font-size: 0.95rem;
   font-weight: 600;

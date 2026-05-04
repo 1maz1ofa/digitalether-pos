@@ -6,6 +6,7 @@ const locationsRouter = require("./routes/locations");
 const productsRouter = require("./routes/products");
 const customersRouter = require("./routes/customers");
 const posRouter = require("./routes/pos");
+const d365Router = require("./routes/d365");
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use("/api/locations", locationsRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/customers", customersRouter);
 app.use("/api/pos", posRouter);
+app.use("/api/d365", d365Router);
 
 // ✅ Database test route
 app.get("/test-db", async (req, res) => {

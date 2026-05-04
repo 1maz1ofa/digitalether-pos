@@ -59,6 +59,17 @@ function readMultiStorePreference() {
   }
 }
 
+function d365CreditRecordMatchesQuery(row, raw) {
+  const q = String(raw).trim().toLowerCase();
+  if (!q) return true;
+  const hay = [row.customerFirstName, row.customerLastName, row.customerNationalId]
+    .filter((x) => x != null && String(x).trim() !== "")
+    .map((x) => String(x).toLowerCase())
+    .join(" ");
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => hay.includes(t));
+}
+
 export function PosPage() {
   const [products, setProducts] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -77,6 +88,16 @@ export function PosPage() {
   const [pickStoreId, setPickStoreId] = useState("");
   const [saleType, setSaleType] = useState("cash");
   const [completedSaleTypeLabel, setCompletedSaleTypeLabel] = useState(null);
+  const [d365Records, setD365Records] = useState([]);
+  const [d365CreditSearch, setD365CreditSearch] = useState("");
+  const [d365Loading, setD365Loading] = useState(false);
+  const [d365Error, setD365Error] = useState("");
+  const [d365Meta, setD365Meta] = useState(null);
+
+  const filteredD365CreditRecords = useMemo(
+    () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
+    [d365Records, d365CreditSearch]
+  );
 
   const load = useCallback(async () => {
     setError("");
@@ -100,6 +121,32 @@ export function PosPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadD365CreditApps = useCallback(async () => {
+    setD365Error("");
+    setD365Loading(true);
+    try {
+      const data = await api.d365.finalApprovedCreditApplications(200);
+      setD365Records(Array.isArray(data.records) ? data.records : []);
+      setD365Meta({
+        statusValue: data.statusValue,
+        statusLabel: data.statusLabel ?? null,
+        count: data.count,
+        branchName: data.branchName ?? null,
+      });
+    } catch (e) {
+      setD365Records([]);
+      setD365Meta(null);
+      setD365Error(e.message || "Could not load D365 credit applications");
+    } finally {
+      setD365Loading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (saleType !== "htb") return;
+    loadD365CreditApps();
+  }, [saleType, loadD365CreditApps]);
 
   useEffect(() => {
     if (!locationId && locations.length) {
@@ -473,6 +520,106 @@ export function PosPage() {
             </div>
           </fieldset>
         </div>
+
+        {saleType === "htb" ? (
+        <section className="card pos-d365-credit" aria-labelledby="pos-d365-credit-heading">
+          <div className="pos-d365-credit-head">
+            <h2 id="pos-d365-credit-heading" className="pos-d365-credit-title">
+              Credit applications
+            </h2>
+            <button
+              type="button"
+              className="btn btn-secondary pos-d365-refresh"
+              onClick={() => loadD365CreditApps()}
+              disabled={d365Loading}
+            >
+              {d365Loading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          {d365Meta ? (
+            <p className="muted pos-d365-meta">
+              Filter: STATUS ={" "}
+              {d365Meta.statusLabel ? (
+                <strong>{d365Meta.statusLabel}</strong>
+              ) : (
+                <span>option {d365Meta.statusValue}</span>
+              )}
+              {d365Meta.branchName ? (
+                <>
+                  {" "}
+                  · BRANCH = <strong>{d365Meta.branchName}</strong>
+                </>
+              ) : null}{" "}
+              · {d365Meta.count} record{d365Meta.count === 1 ? "" : "s"}
+            </p>
+          ) : null}
+          {d365Error ? (
+            <p className="pos-d365-error" role="status">
+              {d365Error}
+            </p>
+          ) : null}
+          {!d365Error && !d365Loading && d365Records.length === 0 ? (
+            <p className="muted">No matching credit applications.</p>
+          ) : null}
+          {d365Loading && !d365Records.length ? (
+            <p className="muted">Loading from Dynamics 365…</p>
+          ) : null}
+          {d365Records.length > 0 ? (
+            <>
+              <div className="pos-d365-toolbar">
+                <input
+                  className="input pos-search pos-d365-search"
+                  type="search"
+                  placeholder="Find by first name, last name, or national ID…"
+                  value={d365CreditSearch}
+                  onChange={(e) => setD365CreditSearch(e.target.value)}
+                  aria-label="Filter credit applications by first name, last name, or national ID"
+                />
+              </div>
+              {filteredD365CreditRecords.length === 0 ? (
+                <p className="muted pos-d365-filter-empty">No applications match your search.</p>
+              ) : (
+                <div className="pos-d365-table-wrap">
+                  <table className="pos-d365-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">First name</th>
+                        <th scope="col">Last name</th>
+                        <th scope="col">National ID</th>
+                        <th scope="col">Address</th>
+                        <th scope="col">Min. deposit</th>
+                        <th scope="col">Installment amount</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Approved date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredD365CreditRecords.map((row) => (
+                        <tr key={row.id || JSON.stringify(row.fields)}>
+                          <td>{row.customerFirstName != null && row.customerFirstName !== "" ? String(row.customerFirstName) : "—"}</td>
+                          <td>{row.customerLastName != null && row.customerLastName !== "" ? String(row.customerLastName) : "—"}</td>
+                          <td>{row.customerNationalId != null && row.customerNationalId !== "" ? String(row.customerNationalId) : "—"}</td>
+                          <td className="pos-d365-address">
+                            {row.customerAddress != null && row.customerAddress !== "" ? String(row.customerAddress) : "—"}
+                          </td>
+                          <td>{money(row.minimumDeposit)}</td>
+                          <td>{money(row.installmentAmount)}</td>
+                          <td>{row.statusLabel ?? String(row.status ?? "—")}</td>
+                          <td className="pos-d365-date">
+                            {row.approvedDate
+                              ? new Date(row.approvedDate).toLocaleString()
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : null}
+        </section>
+        ) : null}
 
         <div className="pos-main-columns">
           <section className="card pos-catalog">
