@@ -21,6 +21,17 @@ let cachedToken = { accessToken: null, expiresAt: 0 };
 let cachedStatusValue = { key: null, value: null, label: null };
 let cachedCustomerExpand = { key: null, expandInner: null, navNames: null };
 let cachedBranchNav = { key: null, navName: null };
+let cachedInstallmentsNav = { key: null, navName: null };
+const CREDIT_APPLICATION_SELECT_COLUMNS = [
+  "htb365_creditapplicationid",
+  "htb365_status",
+  "htb365_approveddate",
+  "htb365_minimumdeposit",
+  "htb365_approvedcredit",
+  "htb365_insurancerate",
+  "htb365_interestrate",
+  "htb365_funeralrate",
+].join(",");
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -470,6 +481,64 @@ async function resolveCreditApplicationBranchNavName() {
 }
 
 /**
+ * Resolve OData navigation property for credit application installments lookup.
+ * @returns {Promise<string>}
+ */
+async function resolveCreditApplicationInstallmentsNavName() {
+  const override = requireEnv("D365_CREDIT_INSTALLMENTS_NAV");
+  if (override) return override;
+
+  const entityLogical = "htb365_creditapplication";
+  const attrLogical = "htb365_numberofinstallments";
+  const cacheKey = `${entityLogical}|${attrLogical}`;
+  if (
+    cachedInstallmentsNav.key === cacheKey &&
+    cachedInstallmentsNav.navName != null
+  ) {
+    return cachedInstallmentsNav.navName;
+  }
+
+  const path =
+    `/EntityDefinitions(LogicalName='${entityLogical}')/ManyToOneRelationships` +
+    `?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
+  let data;
+  try {
+    data = await dataverseRequest(path);
+  } catch (e) {
+    const err = new Error(
+      `Could not read Many-to-One metadata to resolve installments navigation property. ` +
+        `Set D365_CREDIT_INSTALLMENTS_NAV to the OData name from $metadata if needed. ` +
+        `Original: ${e.message}`
+    );
+    err.statusCode = e.statusCode || 502;
+    throw err;
+  }
+
+  const rels = Array.isArray(data?.value) ? data.value : [];
+  const attrLower = attrLogical.toLowerCase();
+  const match = rels.find((r) => {
+    const ref = r.ReferencingAttribute ?? r.referencingattribute ?? "";
+    return String(ref).toLowerCase() === attrLower;
+  });
+  const nav =
+    match?.ReferencingEntityNavigationPropertyName ??
+    match?.referencingentitynavigationpropertyname;
+
+  if (!nav || !String(nav).trim()) {
+    const err = new Error(
+      `No Many-to-One relationship found for installments attribute "${attrLogical}" on ${entityLogical}. ` +
+        `Set D365_CREDIT_INSTALLMENTS_NAV manually (see org $metadata).`
+    );
+    err.statusCode = 422;
+    throw err;
+  }
+
+  const navName = String(nav).trim();
+  cachedInstallmentsNav = { key: cacheKey, navName };
+  return navName;
+}
+
+/**
  * @returns {Promise<{ value: object[] }>}
  */
 async function listCreditApplicationsByStatusValue(
@@ -482,6 +551,7 @@ async function listCreditApplicationsByStatusValue(
 ) {
   const set = entitySetName();
   const safeTop = Math.min(Math.max(Number(top) || 200, 1), 5000);
+  const installmentsNav = await resolveCreditApplicationInstallmentsNavName();
   const parts = [`htb365_status eq ${statusValue}`];
   if (Array.isArray(extraFilterParts) && extraFilterParts.length) {
     parts.push(...extraFilterParts.filter((x) => x != null && String(x).trim() !== ""));
@@ -501,17 +571,18 @@ async function listCreditApplicationsByStatusValue(
   const filter = encodeURIComponent(parts.join(" and "));
   const inner =
     expandInner ?? (await resolveCustomerExpandParts()).expandInner;
-  let expandCombined = inner;
+  let expandCombined = `${installmentsNav}($select=htb365_value),${inner}`;
   if (branchFilter) {
     const branchNav =
       branchNavResolved ||
       requireEnv("D365_CREDIT_BRANCH_NAV") ||
       "htb365_branch";
     const nameCol = requireEnv("D365_BRANCH_NAME_COLUMN") || "htb365_name";
-    expandCombined = `${branchNav}($select=${nameCol}),${inner}`;
+    expandCombined = `${branchNav}($select=${nameCol}),${expandCombined}`;
   }
   const expand = encodeURIComponent(expandCombined);
-  const path = `/${set}?$filter=${filter}&$orderby=modifiedon desc&$top=${safeTop}&$expand=${expand}`;
+  const select = encodeURIComponent(CREDIT_APPLICATION_SELECT_COLUMNS);
+  const path = `/${set}?$select=${select}&$filter=${filter}&$orderby=modifiedon desc&$top=${safeTop}&$expand=${expand}`;
   return dataverseRequest(path);
 }
 
@@ -640,6 +711,12 @@ function mapRecord(row, { customerNavNames } = {}) {
     k.includes("htb365_status@OData.Community.Display.V1.FormattedValue")
   );
   const customer = pickExpandedCustomer(row, customerNavNames);
+  const installmentsNav = Object.keys(row).find((k) => {
+    if (k.includes("@") || k.endsWith("_value")) return false;
+    const v = row[k];
+    return v && typeof v === "object" && !Array.isArray(v) && "htb365_value" in v;
+  });
+  const installments = installmentsNav ? row[installmentsNav] : null;
   return {
     id: idKey ? row[idKey] : null,
     name: nameKey ? row[nameKey] : null,
@@ -655,6 +732,13 @@ function mapRecord(row, { customerNavNames } = {}) {
     customer365Guid: pickCustomer365Guid(row, customer),
     minimumDeposit: row.htb365_minimumdeposit ?? null,
     installmentAmount: row.htb365_approvedcredit ?? null,
+    insuranceRate: row.htb365_insurancerate ?? null,
+    interestRate: row.htb365_interestrate ?? null,
+    funeralRate: row.htb365_funeralrate ?? null,
+    numberOfInstallmentsMonths:
+      installments?.htb365_value ??
+      installments?.["htb365_value@OData.Community.Display.V1.FormattedValue"] ??
+      null,
     fields: row,
   };
 }

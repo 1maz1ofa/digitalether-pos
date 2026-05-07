@@ -27,6 +27,16 @@ function readStoredHtbCreditSelection() {
         o.minimumDeposit === "" || o.minimumDeposit === undefined ? null : o.minimumDeposit,
       installmentAmount:
         o.installmentAmount === "" || o.installmentAmount === undefined ? null : o.installmentAmount,
+      numberOfInstallmentsMonths:
+        o.numberOfInstallmentsMonths === "" || o.numberOfInstallmentsMonths === undefined
+          ? null
+          : o.numberOfInstallmentsMonths,
+      insuranceRate:
+        o.insuranceRate === "" || o.insuranceRate === undefined ? null : o.insuranceRate,
+      interestRate:
+        o.interestRate === "" || o.interestRate === undefined ? null : o.interestRate,
+      funeralRate:
+        o.funeralRate === "" || o.funeralRate === undefined ? null : o.funeralRate,
     };
   } catch {
     return null;
@@ -61,6 +71,55 @@ function money(v) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function calculateHtbRequiredDeposit({
+  totalInvoiceAmount,
+  installmentAmount,
+  numberOfInstallmentsMonths,
+  interestRate,
+  insuranceRate,
+  funeralRate,
+}) {
+  const retailPrice = Number(totalInvoiceAmount);
+  const installment = Number(installmentAmount);
+  const nper = Number(numberOfInstallmentsMonths);
+  const annualInterest = Number(interestRate);
+  const insurance = Number(insuranceRate);
+  const funeral = Number(funeralRate);
+  if (
+    !Number.isFinite(retailPrice) ||
+    retailPrice < 0 ||
+    !Number.isFinite(installment) ||
+    installment < 0 ||
+    !Number.isFinite(nper) ||
+    nper <= 0 ||
+    !Number.isFinite(annualInterest) ||
+    annualInterest < 0 ||
+    !Number.isFinite(insurance) ||
+    insurance < 0 ||
+    !Number.isFinite(funeral) ||
+    funeral < 0
+  ) {
+    return null;
+  }
+  const monthlyRate = annualInterest / 12;
+  const funeralCost = funeral * nper;
+  const insuranceCost = (retailPrice * insurance * nper) / 12;
+  const totalCost = retailPrice + funeralCost + insuranceCost;
+  let loanTotal;
+  if (monthlyRate === 0) {
+    loanTotal = installment * nper;
+  } else {
+    loanTotal =
+      (installment * (1 - Math.pow(1 + monthlyRate, -nper))) / monthlyRate;
+  }
+  let deposit = totalCost - loanTotal;
+  deposit = Math.max(0, deposit);
+  deposit = Math.min(deposit, retailPrice);
+  // Business rule: always round required HTB deposit up to the next dollar.
+  deposit = Math.ceil(deposit);
+  return Number(deposit.toFixed(2));
 }
 
 function toPositiveInt(value) {
@@ -243,13 +302,22 @@ export function PosPage() {
         customerDisplayName,
         minimumDeposit: row.minimumDeposit ?? prev.minimumDeposit,
         installmentAmount: row.installmentAmount ?? prev.installmentAmount,
+        numberOfInstallmentsMonths:
+          row.numberOfInstallmentsMonths ?? prev.numberOfInstallmentsMonths,
         customer365Guid: row.customer365Guid ?? prev.customer365Guid,
+        insuranceRate: row.insuranceRate ?? prev.insuranceRate,
+        interestRate: row.interestRate ?? prev.interestRate,
+        funeralRate: row.funeralRate ?? prev.funeralRate,
       };
       if (
         next.customerDisplayName === prev.customerDisplayName &&
         next.minimumDeposit === prev.minimumDeposit &&
         next.installmentAmount === prev.installmentAmount &&
-        next.customer365Guid === prev.customer365Guid
+        next.numberOfInstallmentsMonths === prev.numberOfInstallmentsMonths &&
+        next.customer365Guid === prev.customer365Guid &&
+        next.insuranceRate === prev.insuranceRate &&
+        next.interestRate === prev.interestRate &&
+        next.funeralRate === prev.funeralRate
       ) {
         return prev;
       }
@@ -496,6 +564,18 @@ export function PosPage() {
     return Number(((subtotal * htbMaxDepositPercent) / 100).toFixed(2));
   }, [saleType, subtotal, htbMaxDepositPercent]);
 
+  const htbRequiredDepositAmount = useMemo(() => {
+    if (saleType !== "htb" || !htbCreditSelection) return null;
+    return calculateHtbRequiredDeposit({
+      totalInvoiceAmount: subtotal,
+      installmentAmount: htbCreditSelection.installmentAmount,
+      numberOfInstallmentsMonths: htbCreditSelection.numberOfInstallmentsMonths,
+      interestRate: htbCreditSelection.interestRate,
+      insuranceRate: htbCreditSelection.insuranceRate,
+      funeralRate: htbCreditSelection.funeralRate,
+    });
+  }, [saleType, htbCreditSelection, subtotal]);
+
   function addToCart(product) {
     setLastReceipt(null);
     const key = cartKey(product.id, null, false);
@@ -662,7 +742,7 @@ export function PosPage() {
           ? {
               d365_credit_application_id: htbCreditSelection.creditApplicationId,
               d365_customer_guid: htbCreditSelection.customer365Guid,
-              d365_minimum_deposit: htbCreditSelection.minimumDeposit,
+              d365_minimum_deposit: htbRequiredDepositAmount,
             }
           : {}),
         ...(paymentPayload || {}),
@@ -730,6 +810,12 @@ export function PosPage() {
     const roundedSubtotal = Number(subtotal.toFixed(2));
     if (saleType === "htb" && roundedAmount > roundedSubtotal) {
       setPaymentError("HTB deposit cannot exceed invoice total. No change can be given on HTB sales.");
+      return;
+    }
+    if (saleType === "htb" && Number.isFinite(htbRequiredDepositAmount) && roundedAmount < htbRequiredDepositAmount) {
+      setPaymentError(
+        `HTB deposit is below the required minimum (${money(htbRequiredDepositAmount)}).`
+      );
       return;
     }
     if (saleType === "htb" && roundedAmount > htbMaxDepositAmount) {
@@ -948,6 +1034,10 @@ export function PosPage() {
                         <th scope="col">Address</th>
                         <th scope="col">Min. deposit</th>
                         <th scope="col">Installment amount</th>
+                        <th scope="col">number of installments (months)</th>
+                        <th scope="col">Insurance rate</th>
+                        <th scope="col">Interest rate</th>
+                        <th scope="col">Funeral rate</th>
                         <th scope="col">Status</th>
                         <th scope="col">Approved date</th>
                         <th scope="col" className="pos-d365-col-actions">
@@ -974,6 +1064,10 @@ export function PosPage() {
                           </td>
                           <td>{money(row.minimumDeposit)}</td>
                           <td>{money(row.installmentAmount)}</td>
+                          <td>{row.numberOfInstallmentsMonths ?? "—"}</td>
+                          <td>{row.insuranceRate ?? "—"}</td>
+                          <td>{row.interestRate ?? "—"}</td>
+                          <td>{row.funeralRate ?? "—"}</td>
                           <td>{row.statusLabel ?? String(row.status ?? "—")}</td>
                           <td className="pos-d365-date">
                             {row.approvedDate
@@ -998,6 +1092,10 @@ export function PosPage() {
                                   customerDisplayName: formatHtbCreditCustomerName(row),
                                   minimumDeposit: row.minimumDeposit ?? null,
                                   installmentAmount: row.installmentAmount ?? null,
+                                  numberOfInstallmentsMonths: row.numberOfInstallmentsMonths ?? null,
+                                  insuranceRate: row.insuranceRate ?? null,
+                                  interestRate: row.interestRate ?? null,
+                                  funeralRate: row.funeralRate ?? null,
                                 };
                                 setHtbCreditSelection(sel);
                                 persistHtbCreditSelection(sel);
@@ -1154,18 +1252,38 @@ export function PosPage() {
                     <p className="pos-htb-selection-name">{htbCreditSelection.customerDisplayName}</p>
                     <dl className="pos-htb-selection-meta pos-htb-selection-meta--amounts">
                       <div>
-                        <dt>Minimum deposit</dt>
-                        <dd>{money(htbCreditSelection.minimumDeposit)}</dd>
+                        <dt>Number of installments (months)</dt>
+                        <dd>{htbCreditSelection.numberOfInstallmentsMonths ?? "—"}</dd>
                       </div>
                       <div>
                         <dt>Installment amount</dt>
                         <dd>{money(htbCreditSelection.installmentAmount)}</dd>
                       </div>
+                      <div>
+                        <dt>Required minimum deposit</dt>
+                        <dd>
+                          {Number.isFinite(htbRequiredDepositAmount)
+                            ? money(htbRequiredDepositAmount)
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Interest rate</dt>
+                        <dd>{htbCreditSelection.interestRate ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Insurance rate</dt>
+                        <dd>{htbCreditSelection.insuranceRate ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Funeral rate</dt>
+                        <dd>{htbCreditSelection.funeralRate ?? "—"}</dd>
+                      </div>
                     </dl>
                   </div>
                 ) : (
                   <p className="muted pos-htb-selection-empty">
-                    Select a credit application above to attach this sale to a D365 customer and minimum deposit.
+                    Select a credit application above to attach this sale to a D365 customer.
                   </p>
                 )}
               </div>
@@ -1240,6 +1358,16 @@ export function PosPage() {
                 <span>Subtotal</span>
                 <strong>{money(subtotal)}</strong>
               </div>
+              {saleType === "htb" ? (
+                <div className="pos-subtotal-meta" aria-live="polite">
+                  <span>Required minimum deposit</span>
+                  <strong>
+                    {Number.isFinite(htbRequiredDepositAmount)
+                      ? money(htbRequiredDepositAmount)
+                      : "—"}
+                  </strong>
+                </div>
+              ) : null}
               <div className="pos-cart-buttons">
                 <button
                   type="button"
@@ -1433,18 +1561,23 @@ export function PosPage() {
             <p className="muted" style={{ margin: 0 }}>
               Invoice value: <strong>{money(subtotal)}</strong>
             </p>
-            <p className="muted" style={{ margin: 0 }}>
-              {saleType === "htb" ? "Deposit taken" : "Total payments applied"}:{" "}
-              <strong>{money(totalPaymentsApplied)}</strong>
-            </p>
-            {saleType === "htb" ? (
+            {saleType === "htb" && Number.isFinite(htbRequiredDepositAmount) ? (
               <p className="muted" style={{ margin: 0 }}>
-                Loan Applied: <strong>{money(loanApplied)}</strong>
+                Required minimum deposit: <strong>{money(htbRequiredDepositAmount)}</strong>
               </p>
             ) : null}
             {saleType === "htb" ? (
               <p className="muted" style={{ margin: 0 }}>
                 Max deposit allowed: <strong>{money(htbMaxDepositAmount)}</strong>
+              </p>
+            ) : null}
+            <p className="muted" style={{ margin: 0 }}>
+              {saleType === "htb" ? "Actual deposit" : "Total payments applied"}:{" "}
+              <strong>{money(totalPaymentsApplied)}</strong>
+            </p>
+            {saleType === "htb" ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Loan applied: <strong>{money(loanApplied)}</strong>
               </p>
             ) : null}
             {saleType !== "htb" && paymentShortfall > 0 ? (

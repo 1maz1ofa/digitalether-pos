@@ -23,6 +23,55 @@ function safeText(value) {
   return text === "" ? null : text;
 }
 
+function calculateRequiredHtbDeposit({
+  totalInvoiceAmount,
+  installmentAmount,
+  numberOfInstallmentsMonths,
+  interestRate,
+  insuranceRate,
+  funeralRate,
+}) {
+  const retailPrice = Number(totalInvoiceAmount);
+  const installment = Number(installmentAmount);
+  const nper = Number(numberOfInstallmentsMonths);
+  const annualInterest = Number(interestRate);
+  const insurance = Number(insuranceRate);
+  const funeral = Number(funeralRate);
+  if (
+    !Number.isFinite(retailPrice) ||
+    retailPrice < 0 ||
+    !Number.isFinite(installment) ||
+    installment < 0 ||
+    !Number.isFinite(nper) ||
+    nper <= 0 ||
+    !Number.isFinite(annualInterest) ||
+    annualInterest < 0 ||
+    !Number.isFinite(insurance) ||
+    insurance < 0 ||
+    !Number.isFinite(funeral) ||
+    funeral < 0
+  ) {
+    return null;
+  }
+  const monthlyRate = annualInterest / 12;
+  const funeralCost = funeral * nper;
+  const insuranceCost = (retailPrice * insurance * nper) / 12;
+  const totalCost = retailPrice + funeralCost + insuranceCost;
+  let loanTotal;
+  if (monthlyRate === 0) {
+    loanTotal = installment * nper;
+  } else {
+    loanTotal =
+      (installment * (1 - Math.pow(1 + monthlyRate, -nper))) / monthlyRate;
+  }
+  let deposit = totalCost - loanTotal;
+  deposit = Math.max(0, deposit);
+  deposit = Math.min(deposit, retailPrice);
+  // Always round up to the nearest whole dollar.
+  deposit = Math.ceil(deposit);
+  return roundMoney(deposit);
+}
+
 function readHtbMaxDepositPercent() {
   const raw = process.env.HTB_MAX_DEPOSIT_PERCENT;
   if (raw === undefined || raw === null || String(raw).trim() === "") {
@@ -392,6 +441,21 @@ router.post("/checkout", async (req, res) => {
       });
     }
     if (saleType === "htb" && normalizedPayments.length > 0) {
+      const requiredDeposit = calculateRequiredHtbDeposit({
+        totalInvoiceAmount: grandTotal,
+        installmentAmount: htbCustomerRecord?.installmentAmount,
+        numberOfInstallmentsMonths: htbCustomerRecord?.numberOfInstallmentsMonths,
+        interestRate: htbCustomerRecord?.interestRate,
+        insuranceRate: htbCustomerRecord?.insuranceRate,
+        funeralRate: htbCustomerRecord?.funeralRate,
+      });
+      if (requiredDeposit != null && paymentsTotal < requiredDeposit) {
+        return res.status(400).json({
+          error: `HTB deposit (${paymentsTotal.toFixed(2)}) is below required minimum (${requiredDeposit.toFixed(
+            2
+          )}).`,
+        });
+      }
       const maxDeposit = roundMoney((grandTotal * htbMaxDepositPercent) / 100);
       if (paymentsTotal > maxDeposit) {
         return res.status(400).json({
