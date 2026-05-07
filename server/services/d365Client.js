@@ -477,11 +477,15 @@ async function listCreditApplicationsByStatusValue(
   top = 200,
   expandInner = null,
   branchFilter = null,
-  branchNavResolved = null
+  branchNavResolved = null,
+  extraFilterParts = []
 ) {
   const set = entitySetName();
   const safeTop = Math.min(Math.max(Number(top) || 200, 1), 5000);
   const parts = [`htb365_status eq ${statusValue}`];
+  if (Array.isArray(extraFilterParts) && extraFilterParts.length) {
+    parts.push(...extraFilterParts.filter((x) => x != null && String(x).trim() !== ""));
+  }
   if (branchFilter) {
     if (branchFilter.mode === "name") {
       const esc = escapeODataString(branchFilter.branchName);
@@ -509,6 +513,36 @@ async function listCreditApplicationsByStatusValue(
   const expand = encodeURIComponent(expandCombined);
   const path = `/${set}?$filter=${filter}&$orderby=modifiedon desc&$top=${safeTop}&$expand=${expand}`;
   return dataverseRequest(path);
+}
+
+async function getFinalApprovedCreditApplicationById(creditApplicationId) {
+  const rawId = String(creditApplicationId ?? "").trim();
+  if (!isDataverseGuidString(rawId)) {
+    const err = new Error("Invalid credit application id.");
+    err.statusCode = 400;
+    throw err;
+  }
+  const { expandInner, navNames } = await resolveCustomerExpandParts();
+  const { value: statusValue } = await resolveFinalApprovedStatus();
+  const needsBranchNav = Boolean(
+    requireEnv("D365_BRANCH_NAME") || requireEnv("D365_BRANCH_ID")
+  );
+  const branchNavResolved = needsBranchNav
+    ? await resolveCreditApplicationBranchNavName()
+    : null;
+  const branchFilter = resolveBranchFilterForQuery(branchNavResolved);
+  const idFilter = `htb365_creditapplicationid eq ${rawId.toLowerCase()}`;
+  const result = await listCreditApplicationsByStatusValue(
+    statusValue,
+    1,
+    expandInner,
+    branchFilter,
+    branchNavResolved,
+    [idFilter]
+  );
+  const rows = Array.isArray(result?.value) ? result.value : [];
+  if (!rows.length) return null;
+  return mapRecord(rows[0], { customerNavNames: navNames });
 }
 
 function pickBranchNameFromCreditRow(row, branchNavResolved = null) {
@@ -685,4 +719,5 @@ module.exports = {
   d365Configured,
   d365ConfigError,
   listFinalApprovedCreditApplications,
+  getFinalApprovedCreditApplicationById,
 };

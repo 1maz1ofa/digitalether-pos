@@ -1180,6 +1180,17 @@ code {
   flex: 1;
 }
 
+.pos-pay-wrap {
+  display: flex;
+  flex: 1;
+  border-radius: 8px;
+}
+
+.pos-pay-wrap:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .pos-pay {
   font-weight: 600;
 }

@@ -63,6 +63,12 @@ function money(v) {
   });
 }
 
+function toPositiveInt(value) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n;
+}
+
 function cartKey(productId, locationId, multiStore) {
   if (multiStore && locationId != null && locationId !== "") {
     const loc = Number(locationId);
@@ -132,6 +138,7 @@ export function PosPage() {
   const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [missingCheckoutInfoOpen, setMissingCheckoutInfoOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
   const [pickProduct, setPickProduct] = useState(null);
   const [pickStoreId, setPickStoreId] = useState("");
@@ -264,8 +271,8 @@ export function PosPage() {
         ? String(posSettings.branchName).trim()
         : null;
     if (fromEnv) return fromEnv;
-    const locId = posSettings?.defaultLocationId;
-    if (locId != null && Number.isInteger(locId) && locId >= 1) {
+    const locId = toPositiveInt(posSettings?.defaultLocationId);
+    if (locId != null) {
       const fromList = locationNameById.get(locId);
       if (fromList) return fromList;
     }
@@ -399,6 +406,24 @@ export function PosPage() {
   const htbNeedsCustomerSelection =
     saleType === "htb" && !htbCreditSelection?.creditApplicationId;
 
+  const missingCheckoutItems = useMemo(() => {
+    const missing = [];
+    if (cartLines.length === 0) missing.push("Add at least one item to the cart.");
+    if (loading) missing.push("Wait for products and settings to finish loading.");
+    if (checkoutLoading) missing.push("Checkout is already in progress.");
+    if (
+      !multiStore &&
+      (posSettings == null ||
+        toPositiveInt(posSettings.defaultLocationId) == null)
+    ) {
+      missing.push("Configure the default branch on the server (D365_BRANCH_ID GUID mapped to location.d365_id).");
+    }
+    if (htbNeedsCustomerSelection) missing.push("Select an HTB customer (credit application).");
+    return missing;
+  }, [cartLines.length, checkoutLoading, loading, multiStore, posSettings, htbNeedsCustomerSelection]);
+
+  const checkoutDisabled = missingCheckoutItems.length > 0;
+
   const subtotal = useMemo(
     () =>
       cartLines.reduce((sum, line) => {
@@ -531,12 +556,8 @@ export function PosPage() {
     setError("");
     setLastReceipt(null);
     setCompletedSaleTypeLabel(null);
-    if (
-      !multiStore &&
-      (posSettings?.defaultLocationId == null ||
-        !Number.isInteger(posSettings.defaultLocationId))
-    ) {
-      setError("Default branch is not configured on the server (BRANCH_ID or branch_id).");
+    if (!multiStore && toPositiveInt(posSettings?.defaultLocationId) == null) {
+      setError("Default branch is not configured on the server (D365_BRANCH_ID GUID mapped to location.d365_id).");
       return;
     }
     if (htbNeedsCustomerSelection) {
@@ -583,6 +604,14 @@ export function PosPage() {
     } finally {
       setCheckoutLoading(false);
     }
+  }
+
+  function handlePayClick() {
+    if (checkoutDisabled) {
+      setMissingCheckoutInfoOpen(true);
+      return;
+    }
+    handleCheckout();
   }
 
   return (
@@ -1086,28 +1115,64 @@ export function PosPage() {
                 >
                   Clear
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-primary pos-pay"
-                  disabled={
-                    cartLines.length === 0 ||
-                    checkoutLoading ||
-                    loading ||
-                    (!multiStore &&
-                      (posSettings == null ||
-                        posSettings.defaultLocationId == null ||
-                        !Number.isInteger(posSettings.defaultLocationId))) ||
-                    htbNeedsCustomerSelection
-                  }
-                  onClick={handleCheckout}
+                <span
+                  className="pos-pay-wrap"
                 >
-                  {checkoutLoading ? "Processing…" : "Complete sale"}
-                </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary pos-pay"
+                    disabled={checkoutLoading}
+                    aria-disabled={checkoutDisabled}
+                    onClick={handlePayClick}
+                    aria-label={
+                      checkoutDisabled
+                        ? "Complete sale (disabled). Show missing information."
+                        : "Complete sale"
+                    }
+                    title={
+                      checkoutDisabled
+                        ? "Click to see what's missing"
+                        : undefined
+                    }
+                  >
+                    {checkoutLoading ? "Processing…" : "Complete sale"}
+                  </button>
+                </span>
               </div>
             </div>
           </aside>
         </div>
       </div>
+
+      <Modal
+        title="Can't complete sale yet"
+        isOpen={missingCheckoutInfoOpen}
+        onClose={() => setMissingCheckoutInfoOpen(false)}
+        footer={
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setMissingCheckoutInfoOpen(false)}
+          >
+            OK
+          </button>
+        }
+      >
+        {missingCheckoutItems.length ? (
+          <>
+            <p style={{ marginTop: 0 }}>
+              Please complete the following before checkout:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {missingCheckoutItems.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p style={{ margin: 0 }}>All required information is present.</p>
+        )}
+      </Modal>
 
       <Modal
         title="Select store"

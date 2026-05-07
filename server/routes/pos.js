@@ -1,6 +1,11 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  d365Configured,
+  d365ConfigError,
+  getFinalApprovedCreditApplicationById,
+} = require("../services/d365Client");
 
 const router = express.Router();
 
@@ -8,54 +13,86 @@ function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
-/** Integer location id from BRANCH_ID or branch_id in .env; null if unset or invalid. */
-function defaultLocationIdFromEnv() {
-  const raw = process.env.BRANCH_ID ?? process.env.branch_id;
-  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
-  const id = parseInt(String(raw).trim(), 10);
-  if (!Number.isInteger(id) || id < 1) return null;
-  return id;
-}
-
-/** Optional display label for the POS branch (header, receipts); not required for checkout. */
-function branchDisplayNameFromEnv() {
-  const raw = process.env.BRANCH_NAME ?? process.env.D365_BRANCH_NAME;
+function branchGuidFromEnv() {
+  const raw =
+    process.env.D365_BRANCH_ID ??
+    process.env.d365_branch_id ??
+    process.env.BRANCH_ID ??
+    process.env.branch_id;
   if (raw === undefined || raw === null) return null;
-  const s = String(raw).trim();
-  return s === "" ? null : s;
+  const guid = String(raw).trim().toLowerCase();
+  if (guid === "") return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guid)) {
+    return null;
+  }
+  return guid;
 }
 
-router.get("/settings", (req, res) => {
-  res.json({
-    defaultLocationId: defaultLocationIdFromEnv(),
-    branchName: branchDisplayNameFromEnv(),
-  });
+async function defaultLocationFromEnv(client, { requireActive = false } = {}) {
+  const guid = branchGuidFromEnv();
+  if (!guid) return null;
+  const where = requireActive
+    ? "d365_id::text = $1 AND COALESCE(is_active, true) = true"
+    : "d365_id::text = $1";
+  const { rows } = await client.query(
+    `SELECT id, name, code
+     FROM location
+     WHERE ${where}
+     ORDER BY id ASC
+     LIMIT 1`,
+    [guid]
+  );
+  if (!rows.length) return null;
+  const row = rows[0];
+  return {
+    id: Number(row.id),
+    name: row.name ? String(row.name).trim() : null,
+    code: row.code ? String(row.code).trim() : null,
+  };
+}
+
+function buildLocalHtbCustomerName(record) {
+  const first = record?.customerFirstName ? String(record.customerFirstName).trim() : "";
+  const last = record?.customerLastName ? String(record.customerLastName).trim() : "";
+  const joined = `${first} ${last}`.trim();
+  if (joined) return joined;
+  const guid = record?.customer365Guid ? String(record.customer365Guid).trim() : "";
+  if (guid) return `HTB Customer ${guid.slice(0, 8)}`;
+  return "HTB Customer";
+}
+
+function isDuplicateHtbCreditApplicationError(err) {
+  if (!err || err.code !== "23505") return false;
+  const constraint = String(err.constraint || "").toLowerCase();
+  const detail = String(err.detail || "").toLowerCase();
+  return (
+    constraint.includes("creditapplication_id") ||
+    detail.includes("creditapplication_id") ||
+    detail.includes("(creditapplication_id)")
+  );
+}
+
+router.get("/settings", async (req, res) => {
+  try {
+    const fromEnv = await defaultLocationFromEnv(pool);
+    res.json({
+      defaultLocationId: fromEnv?.id ?? null,
+      branchName: fromEnv?.name || fromEnv?.code || null,
+    });
+  } catch (err) {
+    sendPgError(res, err);
+  }
 });
 
 /**
  * POST /api/pos/checkout
  * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }],
- *   optional HTB / D365: d365_credit_application_id?, d365_customer_guid?, d365_minimum_deposit? (ignored until persisted) }
- * Each line may include location_id; otherwise body.location_id or BRANCH_ID/branch_id env is used as the default.
+ *   optional HTB / D365: d365_credit_application_id?, d365_customer_guid?, d365_minimum_deposit? }
+ * Each line may include location_id; otherwise body.location_id or branch_id (D365 GUID in .env) is mapped to a local
+ * location by location.d365_id and used as the default.
  * Lines are grouped by resolved location: one completed invoice per distinct location.
  */
 router.post("/checkout", async (req, res) => {
-  const defaultLocationRaw = req.body?.location_id;
-  let resolvedDefaultLocationId = null;
-  if (defaultLocationRaw !== undefined && defaultLocationRaw !== null && defaultLocationRaw !== "") {
-    const parsed = parseInt(defaultLocationRaw, 10);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      return res.status(400).json({ error: "Invalid location_id" });
-    }
-    resolvedDefaultLocationId = parsed;
-  } else {
-    resolvedDefaultLocationId = defaultLocationIdFromEnv();
-  }
-  const hasDefaultLocation =
-    resolvedDefaultLocationId != null &&
-    Number.isInteger(resolvedDefaultLocationId) &&
-    resolvedDefaultLocationId >= 1;
-
   let customerId = null;
   const rawCustomer = req.body?.customer_id;
   if (rawCustomer !== undefined && rawCustomer !== null && rawCustomer !== "") {
@@ -79,10 +116,34 @@ router.post("/checkout", async (req, res) => {
         error: "HTB checkout requires a selected credit application (customer).",
       });
     }
+    if (!d365Configured()) {
+      return res.status(503).json({ error: d365ConfigError() });
+    }
   }
 
   const client = await pool.connect();
   try {
+    const defaultLocationRaw = req.body?.location_id;
+    let resolvedDefaultLocationId = null;
+    if (
+      defaultLocationRaw !== undefined &&
+      defaultLocationRaw !== null &&
+      defaultLocationRaw !== ""
+    ) {
+      const parsed = parseInt(defaultLocationRaw, 10);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return res.status(400).json({ error: "Invalid location_id" });
+      }
+      resolvedDefaultLocationId = parsed;
+    } else {
+      const fromEnv = await defaultLocationFromEnv(client, { requireActive: true });
+      resolvedDefaultLocationId = fromEnv?.id ?? null;
+    }
+    const hasDefaultLocation =
+      resolvedDefaultLocationId != null &&
+      Number.isInteger(resolvedDefaultLocationId) &&
+      resolvedDefaultLocationId >= 1;
+
     if (customerId !== null) {
       const custChk = await client.query("SELECT 1 FROM customers WHERE id = $1", [
         customerId,
@@ -159,7 +220,57 @@ router.post("/checkout", async (req, res) => {
       byLocation.get(L.locationId).push(L);
     }
 
+    let htbCustomerRecord = null;
+    let htbCreditApplicationId = null;
+    if (saleType === "htb") {
+      htbCustomerRecord = await getFinalApprovedCreditApplicationById(
+        req.body?.d365_credit_application_id
+      );
+      if (!htbCustomerRecord) {
+        return res.status(400).json({
+          error: "Selected HTB credit application was not found or is not FINAL APPROVED.",
+        });
+      }
+      if (
+        htbCustomerRecord.customer365Guid == null ||
+        String(htbCustomerRecord.customer365Guid).trim() === ""
+      ) {
+        return res.status(400).json({
+          error: "Selected HTB customer is missing a Dynamics 365 customer id.",
+        });
+      }
+      htbCreditApplicationId =
+        htbCustomerRecord.id != null && String(htbCustomerRecord.id).trim() !== ""
+          ? String(htbCustomerRecord.id).trim().toLowerCase()
+          : null;
+    }
+
     await client.query("BEGIN");
+
+    if (saleType === "htb") {
+      const htbId = String(htbCustomerRecord.customer365Guid).trim().toLowerCase();
+      const existing = await client.query(
+        "SELECT id FROM customers WHERE htb_id = $1::uuid LIMIT 1",
+        [htbId]
+      );
+      if (existing.rowCount > 0) {
+        customerId = Number(existing.rows[0].id);
+      } else {
+        const { rows: insRows } = await client.query(
+          `INSERT INTO customers (name, address, htb_id)
+           VALUES ($1, $2, $3::uuid)
+           RETURNING id`,
+          [
+            buildLocalHtbCustomerName(htbCustomerRecord),
+            htbCustomerRecord.customerAddress
+              ? String(htbCustomerRecord.customerAddress).trim()
+              : null,
+            htbId,
+          ]
+        );
+        customerId = Number(insRows[0].id);
+      }
+    }
 
     const invoices = [];
     let invIndex = 0;
@@ -168,10 +279,17 @@ router.post("/checkout", async (req, res) => {
       const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${invIndex++}`;
 
       const { rows: invRows } = await client.query(
-        `INSERT INTO invoices (invoice_number, customer_id, location_id, total, status)
-         VALUES ($1, $2, $3, $4, 'completed')
-         RETURNING id, invoice_number, customer_id, location_id, total, status, created_at`,
-        [invoiceNumber, customerId, locId, invoiceTotal]
+        `INSERT INTO invoices (
+           invoice_number,
+           customer_id,
+           location_id,
+           total,
+           status,
+           creditapplication_id
+         )
+         VALUES ($1, $2, $3, $4, 'completed', $5::uuid)
+         RETURNING id, invoice_number, customer_id, location_id, total, status, creditapplication_id, created_at`,
+        [invoiceNumber, customerId, locId, invoiceTotal, htbCreditApplicationId]
       );
       const invoice = invRows[0];
 
@@ -195,6 +313,11 @@ router.post("/checkout", async (req, res) => {
       await client.query("ROLLBACK");
     } catch {
       /* ignore */
+    }
+    if (saleType === "htb" && isDuplicateHtbCreditApplicationError(err)) {
+      return res.status(409).json({
+        error: "This HTB credit application has already been used for an invoice.",
+      });
     }
     sendPgError(res, err);
   } finally {
