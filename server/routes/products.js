@@ -7,10 +7,11 @@ const router = express.Router();
 const listSql = `
   SELECT p.id, p.code, p.name, p.description, p.barcode, p.unit_of_measure,
          p.category_id, c.name AS category_name,
-         p.unit_cost, p.unit_price, p.price_includes_vat, p.is_active,
+         p.unit_cost, p.unit_price, p.vat_id, v.name AS vat_name, v.percentage AS vat_percentage, p.is_active,
          p.reorder_level, p.created_at
   FROM product p
   LEFT JOIN category c ON c.id = p.category_id
+  LEFT JOIN vat v ON v.id = p.vat_id
 `;
 
 router.get("/", async (req, res) => {
@@ -74,10 +75,7 @@ router.post("/", async (req, res) => {
     const categoryId = parseOptionalInt(req.body?.category_id);
     const unitCost = parseOptionalNumber(req.body?.unit_cost);
     const unitPrice = parseOptionalNumber(req.body?.unit_price);
-    const priceIncludesVat =
-      req.body?.price_includes_vat === undefined
-        ? null
-        : Boolean(req.body.price_includes_vat);
+    let vatId = parseOptionalInt(req.body?.vat_id);
     const isActive =
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
     const reorderLevel = parseOptionalInt(req.body?.reorder_level);
@@ -90,11 +88,23 @@ router.post("/", async (req, res) => {
         return res.status(400).json({ error: "Invalid category_id" });
       }
     }
+    if (vatId === null) {
+      const defaultVat = await pool.query(
+        "SELECT id FROM vat WHERE is_default = true ORDER BY id LIMIT 1"
+      );
+      vatId = defaultVat.rowCount ? defaultVat.rows[0].id : null;
+    }
+    if (vatId !== null) {
+      const chk = await pool.query("SELECT 1 FROM vat WHERE id = $1", [vatId]);
+      if (!chk.rowCount) {
+        return res.status(400).json({ error: "Invalid vat_id" });
+      }
+    }
 
     const { rows } = await pool.query(
       `INSERT INTO product (
         code, name, description, barcode, unit_of_measure, category_id,
-        unit_cost, unit_price, price_includes_vat, is_active, reorder_level
+        unit_cost, unit_price, vat_id, is_active, reorder_level
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       RETURNING id`,
       [
@@ -106,7 +116,7 @@ router.post("/", async (req, res) => {
         categoryId,
         unitCost,
         unitPrice,
-        priceIncludesVat,
+        vatId,
         isActive,
         reorderLevel,
       ]
@@ -149,10 +159,7 @@ router.put("/:id", async (req, res) => {
     const categoryId = parseOptionalInt(req.body?.category_id);
     const unitCost = parseOptionalNumber(req.body?.unit_cost);
     const unitPrice = parseOptionalNumber(req.body?.unit_price);
-    const priceIncludesVat =
-      req.body?.price_includes_vat === undefined
-        ? null
-        : Boolean(req.body.price_includes_vat);
+    const vatId = parseOptionalInt(req.body?.vat_id);
     const isActive =
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
     const reorderLevel = parseOptionalInt(req.body?.reorder_level);
@@ -165,11 +172,17 @@ router.put("/:id", async (req, res) => {
         return res.status(400).json({ error: "Invalid category_id" });
       }
     }
+    if (vatId !== null) {
+      const chk = await pool.query("SELECT 1 FROM vat WHERE id = $1", [vatId]);
+      if (!chk.rowCount) {
+        return res.status(400).json({ error: "Invalid vat_id" });
+      }
+    }
 
     const { rows } = await pool.query(
       `UPDATE product SET
         code = $1, name = $2, description = $3, barcode = $4, unit_of_measure = $5,
-        category_id = $6, unit_cost = $7, unit_price = $8, price_includes_vat = $9,
+        category_id = $6, unit_cost = $7, unit_price = $8, vat_id = $9,
         is_active = $10, reorder_level = $11
       WHERE id = $12
       RETURNING id`,
@@ -182,7 +195,7 @@ router.put("/:id", async (req, res) => {
         categoryId,
         unitCost,
         unitPrice,
-        priceIncludesVat,
+        vatId,
         isActive,
         reorderLevel,
         id,

@@ -17,6 +17,19 @@ function moneyToCents(n) {
   return Math.round(Number(n) * 100);
 }
 
+function normalizeVatPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+function vatIncludedAmount(totalIncludingVat, vatPercentage) {
+  const total = Number(totalIncludingVat);
+  const rate = normalizeVatPercentage(vatPercentage);
+  if (!Number.isFinite(total) || total <= 0 || rate <= 0) return 0;
+  return (total * rate) / (100 + rate);
+}
+
 function safeText(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
@@ -351,7 +364,10 @@ router.post("/checkout", async (req, res) => {
       }
 
       const { rows } = await client.query(
-        `SELECT id, unit_price, is_active FROM product WHERE id = $1`,
+        `SELECT p.id, p.unit_price, p.is_active, v.percentage AS vat_percentage
+         FROM product p
+         LEFT JOIN vat v ON v.id = p.vat_id
+         WHERE p.id = $1`,
         [productId]
       );
       if (!rows.length) {
@@ -368,7 +384,19 @@ router.post("/checkout", async (req, res) => {
         });
       }
       const lineTotal = roundMoney(qty * unitPrice);
-      pricedLines.push({ productId, qty, unitPrice, lineTotal, locationId: lineLocationId });
+      const vatPercentage = normalizeVatPercentage(p.vat_percentage);
+      const lineVatAmount = roundMoney(vatIncludedAmount(lineTotal, vatPercentage));
+      const lineSubTotal = roundMoney(lineTotal - lineVatAmount);
+      pricedLines.push({
+        productId,
+        qty,
+        unitPrice,
+        vatPercentage,
+        lineSubTotal,
+        lineVatAmount,
+        lineTotal,
+        locationId: lineLocationId,
+      });
     }
 
     const locationIds = [...new Set(pricedLines.map((L) => L.locationId))];
@@ -475,11 +503,13 @@ router.post("/checkout", async (req, res) => {
 
     const invoices = [];
     let invIndex = 0;
-    const grandTotal = roundMoney(pricedLines.reduce((s, L) => s + L.lineTotal, 0));
+    const grandSubTotal = roundMoney(pricedLines.reduce((s, L) => s + L.lineSubTotal, 0));
+    const grandVatAmount = roundMoney(pricedLines.reduce((s, L) => s + L.lineVatAmount, 0));
+    const grandTotal = roundMoney(grandSubTotal + grandVatAmount);
     const paymentsTotal = roundMoney(normalizedPayments.reduce((s, p) => s + p.amount, 0));
-    if (saleType !== "htb" && normalizedPayments.length > 0 && paymentsTotal !== grandTotal) {
+    if (saleType !== "htb" && normalizedPayments.length > 0 && paymentsTotal < grandTotal) {
       return res.status(400).json({
-        error: `Payment amount (${paymentsTotal.toFixed(2)}) must equal sale total (${grandTotal.toFixed(2)}).`,
+        error: `Payment amount (${paymentsTotal.toFixed(2)}) is less than sale total (${grandTotal.toFixed(2)}).`,
       });
     }
     if (saleType === "htb" && normalizedPayments.length > 0 && paymentsTotal > grandTotal) {
@@ -544,7 +574,9 @@ router.post("/checkout", async (req, res) => {
           ? distinctPaymentReferences[0]
           : null;
     for (const [locId, groupLines] of byLocation) {
-      const invoiceTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineTotal, 0));
+      const invoiceSubTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineSubTotal, 0));
+      const invoiceVatAmount = roundMoney(groupLines.reduce((s, L) => s + L.lineVatAmount, 0));
+      const invoiceTotal = roundMoney(invoiceSubTotal + invoiceVatAmount);
       const invoiceTotalCents = moneyToCents(invoiceTotal);
       const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${invIndex++}`;
 
@@ -553,6 +585,8 @@ router.post("/checkout", async (req, res) => {
            invoice_number,
            customer_id,
            location_id,
+           subtotal,
+           vat,
            total,
            status,
            currency_id,
@@ -560,12 +594,14 @@ router.post("/checkout", async (req, res) => {
            creditapplication_id,
            reference_number
          )
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6, $7::uuid, $8)
-         RETURNING id, invoice_number, customer_id, location_id, total, status, currency_id, sale_type_id, creditapplication_id, created_at`,
+         VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9::uuid, $10)
+         RETURNING id, invoice_number, customer_id, location_id, subtotal, vat, total, status, currency_id, sale_type_id, creditapplication_id, created_at`,
         [
           invoiceNumber,
           customerId,
           locId,
+          invoiceSubTotal,
+          invoiceVatAmount,
           invoiceTotal,
           parsedCurrencyId,
           saleTypeId,
@@ -578,21 +614,32 @@ router.post("/checkout", async (req, res) => {
       const savedItems = [];
       for (const L of groupLines) {
         const { rows: itemRows } = await client.query(
-          `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, total)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, product_id, quantity, unit_price, total`,
-          [invoice.id, L.productId, L.qty, L.unitPrice, L.lineTotal]
+          `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, subtotal, vat, total)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, product_id, quantity, unit_price, subtotal, vat, total`,
+          [invoice.id, L.productId, L.qty, L.unitPrice, L.lineSubTotal, L.lineVatAmount, L.lineTotal]
         );
         savedItems.push(itemRows[0]);
       }
       if (paymentPool.length > 0) {
         const invoicePayments = [];
         if (byLocation.size === 1) {
+          let remainingInvoiceCents = invoiceTotalCents;
           for (const p of paymentPool) {
+            if (remainingInvoiceCents <= 0) break;
+            if (p.amountCents <= 0) continue;
+            const allocationCents = Math.min(remainingInvoiceCents, p.amountCents);
+            if (allocationCents <= 0) continue;
+            remainingInvoiceCents -= allocationCents;
             invoicePayments.push({
               payment_method_id: p.payment_method_id,
-              amount: p.amount,
+              amount: roundMoney(allocationCents / 100),
               reference: p.reference,
+            });
+          }
+          if (remainingInvoiceCents !== 0) {
+            return res.status(400).json({
+              error: "Could not allocate payments to this invoice.",
             });
           }
         } else if (paymentPool.length === 1) {

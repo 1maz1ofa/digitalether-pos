@@ -90,6 +90,18 @@ export const api = {
     remove: (id) =>
       apiRequest(`/api/currencies/${id}`, { method: "DELETE" }),
   },
+  vat: {
+    list: () => apiRequest("/api/vat"),
+    get: (id) => apiRequest(`/api/vat/${id}`),
+    create: (data) =>
+      apiRequest("/api/vat", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/vat/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => apiRequest(`/api/vat/${id}`, { method: "DELETE" }),
+  },
   pos: {
     settings: () => apiRequest("/api/pos/settings"),
     paymentMethods: () => apiRequest("/api/pos/payment-methods"),

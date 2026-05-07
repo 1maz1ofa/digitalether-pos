@@ -8,6 +8,7 @@ const customersRouter = require("./routes/customers");
 const posRouter = require("./routes/pos");
 const d365Router = require("./routes/d365");
 const currenciesRouter = require("./routes/currencies");
+const vatRouter = require("./routes/vat");
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use("/api/customers", customersRouter);
 app.use("/api/pos", posRouter);
 app.use("/api/d365", d365Router);
 app.use("/api/currencies", currenciesRouter);
+app.use("/api/vat", vatRouter);
 
 // ✅ Database test route
 app.get("/test-db", async (req, res) => {

@@ -9,9 +9,9 @@ const emptyForm = {
   barcode: "",
   unit_of_measure: "",
   category_id: "",
+  vat_id: "",
   unit_cost: "",
   unit_price: "",
-  price_includes_vat: false,
   is_active: true,
   reorder_level: "",
 };
@@ -23,9 +23,18 @@ function money(v) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
+function vatLabel(row) {
+  if (row?.vat_name) {
+    const pct = Number(row.vat_percentage);
+    return Number.isFinite(pct) ? `${row.vat_name} (${pct.toFixed(2)}%)` : row.vat_name;
+  }
+  return "—";
+}
+
 export function ProductsPage() {
   const [rows, setRows] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [vatRates, setVatRates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,12 +46,14 @@ export function ProductsPage() {
     setError("");
     setLoading(true);
     try {
-      const [products, cats] = await Promise.all([
+      const [products, cats, vat] = await Promise.all([
         api.products.list(),
         api.categories.list(),
+        api.vat.list(),
       ]);
       setRows(products);
       setCategories(cats);
+      setVatRates(vat);
     } catch (e) {
       setError(e.message || "Failed to load products");
     } finally {
@@ -55,8 +66,12 @@ export function ProductsPage() {
   }, [load]);
 
   function openCreate() {
+    const defaultVat = vatRates.find((v) => v.is_default);
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      vat_id: defaultVat ? String(defaultVat.id) : "",
+    });
     setModalOpen(true);
   }
 
@@ -69,9 +84,9 @@ export function ProductsPage() {
       barcode: row.barcode || "",
       unit_of_measure: row.unit_of_measure || "",
       category_id: row.category_id != null ? String(row.category_id) : "",
+      vat_id: row.vat_id != null ? String(row.vat_id) : "",
       unit_cost: row.unit_cost != null ? String(row.unit_cost) : "",
       unit_price: row.unit_price != null ? String(row.unit_price) : "",
-      price_includes_vat: Boolean(row.price_includes_vat),
       is_active: Boolean(row.is_active),
       reorder_level: row.reorder_level != null ? String(row.reorder_level) : "",
     });
@@ -81,6 +96,7 @@ export function ProductsPage() {
   function buildPayload() {
     const category_id =
       form.category_id === "" ? null : parseInt(form.category_id, 10);
+    const vat_id = form.vat_id === "" ? null : parseInt(form.vat_id, 10);
     const unit_cost = form.unit_cost === "" ? null : Number(form.unit_cost);
     const unit_price = form.unit_price === "" ? null : Number(form.unit_price);
     const reorder_level =
@@ -92,9 +108,9 @@ export function ProductsPage() {
       barcode: form.barcode || null,
       unit_of_measure: form.unit_of_measure || null,
       category_id,
+      vat_id: Number.isInteger(vat_id) ? vat_id : null,
       unit_cost: Number.isFinite(unit_cost) ? unit_cost : null,
       unit_price: Number.isFinite(unit_price) ? unit_price : null,
-      price_includes_vat: form.price_includes_vat,
       is_active: form.is_active,
       reorder_level: Number.isInteger(reorder_level) ? reorder_level : null,
     };
@@ -161,6 +177,7 @@ export function ProductsPage() {
                   <th>Name</th>
                   <th>Category</th>
                   <th>Unit price</th>
+                  <th>VAT</th>
                   <th>Active</th>
                   <th className="col-actions">Actions</th>
                 </tr>
@@ -168,7 +185,7 @@ export function ProductsPage() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="muted">
+                    <td colSpan={7} className="muted">
                       No products yet.
                     </td>
                   </tr>
@@ -179,6 +196,7 @@ export function ProductsPage() {
                       <td>{r.name}</td>
                       <td>{r.category_name || "—"}</td>
                       <td>{money(r.unit_price)}</td>
+                      <td>{vatLabel(r)}</td>
                       <td>{r.is_active ? "Yes" : "No"}</td>
                       <td className="col-actions">
                         <button
@@ -292,6 +310,21 @@ export function ProductsPage() {
             </select>
           </label>
           <label className="field">
+            <span className="field-label">VAT</span>
+            <select
+              className="input"
+              value={form.vat_id}
+              onChange={(e) => setForm({ ...form, vat_id: e.target.value })}
+            >
+              <option value="">— None —</option>
+              {vatRates.map((v) => (
+                <option key={v.id} value={String(v.id)}>
+                  {`${v.name || `VAT #${v.id}`} (${Number(v.percentage || 0).toFixed(2)}%)`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
             <span className="field-label">Unit cost</span>
             <input
               className="input"
@@ -320,16 +353,6 @@ export function ProductsPage() {
               value={form.reorder_level}
               onChange={(e) => setForm({ ...form, reorder_level: e.target.value })}
             />
-          </label>
-          <label className="field field--checkbox">
-            <input
-              type="checkbox"
-              checked={form.price_includes_vat}
-              onChange={(e) =>
-                setForm({ ...form, price_includes_vat: e.target.checked })
-              }
-            />
-            <span>Price includes VAT</span>
           </label>
           <label className="field field--checkbox">
             <input

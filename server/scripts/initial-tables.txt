@@ -6,6 +6,18 @@ CREATE TABLE category (
 );
 
 -- =========================
+-- VAT
+-- =========================
+CREATE TABLE vat (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    percentage DECIMAL(5,2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
+    is_active BOOLEAN DEFAULT TRUE,
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =========================
 -- LOCATION (BRANCHES)
 -- =========================
 CREATE TABLE location (
@@ -30,6 +42,7 @@ CREATE TABLE product (
     category_id INTEGER REFERENCES category(id),
     unit_cost DECIMAL,
     unit_price DECIMAL,
+    vat_id INTEGER REFERENCES vat(id),
     price_includes_vat BOOLEAN,
     is_active BOOLEAN DEFAULT TRUE,
     reorder_level INTEGER,
@@ -83,6 +96,8 @@ CREATE TABLE invoices (
     invoice_number TEXT UNIQUE,
     customer_id INTEGER REFERENCES customers(id),
     location_id INTEGER REFERENCES location(id),
+    sub_total DECIMAL,
+    vat_amount DECIMAL,
     total DECIMAL,
     status VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -94,6 +109,8 @@ CREATE TABLE invoice_items (
     product_id INTEGER REFERENCES product(id),
     quantity DECIMAL,
     unit_price DECIMAL,
+    sub_total DECIMAL,
+    vat_amount DECIMAL,
     total DECIMAL
 );
 

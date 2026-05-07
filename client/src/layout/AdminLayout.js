@@ -8,6 +8,7 @@ const nav = [
   { to: "/locations", label: "Locations" },
   { to: "/products", label: "Products" },
   { to: "/customers", label: "Customers" },
+  { to: "/vat", label: "VAT" },
 ];
 
 export function AdminLayout() {

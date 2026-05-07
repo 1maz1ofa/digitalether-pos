@@ -77,6 +77,30 @@ function money(v) {
   });
 }
 
+function normalizedVatPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+function lineSubTotal(line) {
+  const price = Number(line.unit_price);
+  const qty = Number(line.quantity);
+  if (!Number.isFinite(price) || !Number.isFinite(qty)) return 0;
+  return price * qty;
+}
+
+function lineVatAmount(line) {
+  const totalIncludingVat = lineSubTotal(line);
+  const vatPercentage = normalizedVatPercentage(line.vat_percentage);
+  if (totalIncludingVat <= 0 || vatPercentage <= 0) return 0;
+  return (totalIncludingVat * vatPercentage) / (100 + vatPercentage);
+}
+
+function lineTotalWithVat(line) {
+  return lineSubTotal(line);
+}
+
 function calculateHtbRequiredDeposit({
   totalInvoiceAmount,
   installmentAmount,
@@ -136,6 +160,14 @@ function toPositiveInt(value) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) return null;
   return n;
+}
+
+function resolveDefaultCustomerId(customers) {
+  const activeCustomers = Array.isArray(customers) ? customers : [];
+  const defaultCustomer = activeCustomers.find((c) => c.is_default);
+  if (defaultCustomer?.id != null) return String(defaultCustomer.id);
+  const firstCustomer = activeCustomers[0];
+  return firstCustomer?.id != null ? String(firstCustomer.id) : "";
 }
 
 function cartKey(productId, locationId, multiStore) {
@@ -275,10 +307,7 @@ export function PosPage() {
         if (prev && activeCustomers.some((c) => String(c.id) === String(prev))) {
           return String(prev);
         }
-        const defaultCustomer = activeCustomers.find((c) => c.is_default);
-        if (defaultCustomer?.id != null) return String(defaultCustomer.id);
-        const firstCustomer = activeCustomers[0];
-        return firstCustomer?.id != null ? String(firstCustomer.id) : "";
+        return resolveDefaultCustomerId(activeCustomers);
       });
       setPosSettings(settings);
       setPaymentMethods(Array.isArray(methods) ? methods : []);
@@ -404,10 +433,7 @@ export function PosPage() {
       if (prev && activeCustomers.some((c) => String(c.id) === String(prev))) {
         return String(prev);
       }
-      const defaultCustomer = activeCustomers.find((c) => c.is_default);
-      if (defaultCustomer?.id != null) return String(defaultCustomer.id);
-      const firstCustomer = activeCustomers[0];
-      return firstCustomer?.id != null ? String(firstCustomer.id) : "";
+      return resolveDefaultCustomerId(activeCustomers);
     });
   }, [saleType, customers]);
 
@@ -586,14 +612,16 @@ export function PosPage() {
   const checkoutDisabled = missingCheckoutItems.length > 0;
 
   const subtotal = useMemo(
-    () =>
-      cartLines.reduce((sum, line) => {
-        const price = Number(line.unit_price);
-        const qty = Number(line.quantity);
-        if (!Number.isFinite(price) || !Number.isFinite(qty)) return sum;
-        return sum + price * qty;
-      }, 0),
+    () => cartLines.reduce((sum, line) => sum + lineTotalWithVat(line), 0),
     [cartLines]
+  );
+  const vatTotal = useMemo(
+    () => cartLines.reduce((sum, line) => sum + lineVatAmount(line), 0),
+    [cartLines]
+  );
+  const subTotalBeforeVat = useMemo(
+    () => Number((subtotal - vatTotal).toFixed(2)),
+    [subtotal, vatTotal]
   );
 
   const displayPaymentMethods = useMemo(
@@ -696,9 +724,11 @@ export function PosPage() {
       const next = new Map(prev);
       const existing = next.get(key);
       const unitPrice = Number(product.unit_price);
+      const vatPercentage = normalizedVatPercentage(product.vat_percentage);
       if (existing) {
         next.set(key, {
           ...existing,
+          vat_percentage: vatPercentage,
           quantity: existing.quantity + 1,
         });
       } else {
@@ -708,6 +738,7 @@ export function PosPage() {
           code: product.code,
           name: product.name,
           unit_price: unitPrice,
+          vat_percentage: vatPercentage,
           quantity: 1,
         });
       }
@@ -723,9 +754,11 @@ export function PosPage() {
       const next = new Map(prev);
       const existing = next.get(key);
       const unitPrice = Number(product.unit_price);
+      const vatPercentage = normalizedVatPercentage(product.vat_percentage);
       if (existing) {
         next.set(key, {
           ...existing,
+          vat_percentage: vatPercentage,
           quantity: existing.quantity + 1,
         });
       } else {
@@ -735,6 +768,7 @@ export function PosPage() {
           code: product.code,
           name: product.name,
           unit_price: unitPrice,
+          vat_percentage: vatPercentage,
           quantity: 1,
           location_id: locId,
           location_label: locLabel,
@@ -868,6 +902,11 @@ export function PosPage() {
       setPaymentAmountsByMethod({});
       setPaymentReference("");
       clearCart();
+      setHtbCreditSelection(null);
+      persistHtbCreditSelection(null);
+      setD365CreditSearch("");
+      setD365CreditAppsListExpanded(true);
+      setCustomerId(saleType === "cash" ? resolveDefaultCustomerId(customers) : "");
     } catch (e) {
       const msg = e.message || "Checkout failed";
       if (fromPaymentModal) setPaymentError(msg);
@@ -1472,7 +1511,7 @@ export function PosPage() {
                         ×
                       </button>
                     </div>
-                    <div className="pos-line-total">{money(line.quantity * line.unit_price)}</div>
+                    <div className="pos-line-total">{money(lineTotalWithVat(line))}</div>
                   </div>
                 ))
               )}
@@ -1481,6 +1520,14 @@ export function PosPage() {
             <div className="pos-cart-footer">
               <div className="pos-subtotal">
                 <span>Subtotal</span>
+                <strong>{money(subTotalBeforeVat)}</strong>
+              </div>
+              <div className="pos-subtotal">
+                <span>VAT</span>
+                <strong>{money(vatTotal)}</strong>
+              </div>
+              <div className="pos-subtotal">
+                <span>Total</span>
                 <strong>{money(subtotal)}</strong>
               </div>
               {saleType === "htb" ? (
