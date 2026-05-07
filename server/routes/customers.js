@@ -7,7 +7,7 @@ const router = express.Router();
 router.get("/", async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, phone, email, address, created_at
+      `SELECT id, name, phone, email, address, is_default, created_at
        FROM customers
        ORDER BY name NULLS LAST, id`
     );
@@ -24,7 +24,7 @@ router.get("/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid id" });
     }
     const { rows } = await pool.query(
-      `SELECT id, name, phone, email, address, created_at
+      `SELECT id, name, phone, email, address, is_default, created_at
        FROM customers WHERE id = $1`,
       [id]
     );
@@ -54,7 +54,7 @@ router.post("/", async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO customers (name, phone, email, address)
        VALUES ($1, $2, $3, $4)
-       RETURNING id, name, phone, email, address, created_at`,
+       RETURNING id, name, phone, email, address, is_default, created_at`,
       [String(name).trim(), phone, email, address]
     );
     res.status(201).json(rows[0]);
@@ -81,7 +81,7 @@ router.put("/:id", async (req, res) => {
       `UPDATE customers
        SET name = $1, phone = $2, email = $3, address = $4
        WHERE id = $5
-       RETURNING id, name, phone, email, address, created_at`,
+       RETURNING id, name, phone, email, address, is_default, created_at`,
       [String(name).trim(), phone, email, address, id]
     );
     if (!rows.length) return res.status(404).json({ error: "Customer not found" });

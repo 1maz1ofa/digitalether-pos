@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AdminLayout } from "./layout/AdminLayout";
 import { CategoriesPage } from "./pages/CategoriesPage";
+import { CurrenciesPage } from "./pages/CurrenciesPage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { LocationsPage } from "./pages/LocationsPage";
 import { ProductsPage } from "./pages/ProductsPage";
@@ -15,6 +16,7 @@ function App() {
           <Route index element={<Navigate to="/pos" replace />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="categories" element={<CategoriesPage />} />
+          <Route path="currencies" element={<CurrenciesPage />} />
           <Route path="locations" element={<LocationsPage />} />
           <Route path="products" element={<ProductsPage />} />
           <Route path="customers" element={<CustomersPage />} />

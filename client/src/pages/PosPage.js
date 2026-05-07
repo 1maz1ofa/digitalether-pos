@@ -23,6 +23,10 @@ function readStoredHtbCreditSelection() {
         o.customerDisplayName != null && String(o.customerDisplayName).trim() !== ""
           ? String(o.customerDisplayName).trim()
           : "Customer",
+      capNumber:
+        o.capNumber != null && String(o.capNumber).trim() !== ""
+          ? String(o.capNumber).trim()
+          : null,
       minimumDeposit:
         o.minimumDeposit === "" || o.minimumDeposit === undefined ? null : o.minimumDeposit,
       installmentAmount:
@@ -194,6 +198,8 @@ export function PosPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [posSettings, setPosSettings] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
+  const [currencyId, setCurrencyId] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
@@ -226,18 +232,42 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const [p, loc, cust, settings, methods] = await Promise.all([
+      const [p, loc, cust, settings, methods, currencyRows] = await Promise.all([
         api.products.list(),
         api.locations.list(),
         api.customers.list(),
         api.pos.settings(),
         api.pos.paymentMethods(),
+        api.currencies.list(),
       ]);
       setProducts(p);
       setLocations(loc.filter((l) => l.is_active !== false));
       setCustomers(cust);
+      const activeCustomers = Array.isArray(cust) ? cust : [];
+      setCustomerId((prev) => {
+        if (prev && activeCustomers.some((c) => String(c.id) === String(prev))) {
+          return String(prev);
+        }
+        const defaultCustomer = activeCustomers.find((c) => c.is_default);
+        if (defaultCustomer?.id != null) return String(defaultCustomer.id);
+        const firstCustomer = activeCustomers[0];
+        return firstCustomer?.id != null ? String(firstCustomer.id) : "";
+      });
       setPosSettings(settings);
       setPaymentMethods(Array.isArray(methods) ? methods : []);
+      const activeCurrencies = Array.isArray(currencyRows)
+        ? currencyRows.filter((c) => c && c.is_active !== false)
+        : [];
+      setCurrencies(activeCurrencies);
+      setCurrencyId((prev) => {
+        if (prev && activeCurrencies.some((c) => String(c.id) === String(prev))) {
+          return String(prev);
+        }
+        const defaultCurrency = activeCurrencies.find((c) => c.is_default);
+        if (defaultCurrency?.id != null) return String(defaultCurrency.id);
+        const firstActive = activeCurrencies[0];
+        return firstActive?.id != null ? String(firstActive.id) : "";
+      });
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally {
@@ -300,6 +330,10 @@ export function PosPage() {
       const next = {
         ...prev,
         customerDisplayName,
+        capNumber:
+          row.capNumber != null && String(row.capNumber).trim() !== ""
+            ? String(row.capNumber).trim()
+            : prev.capNumber ?? null,
         minimumDeposit: row.minimumDeposit ?? prev.minimumDeposit,
         installmentAmount: row.installmentAmount ?? prev.installmentAmount,
         numberOfInstallmentsMonths:
@@ -311,6 +345,7 @@ export function PosPage() {
       };
       if (
         next.customerDisplayName === prev.customerDisplayName &&
+        next.capNumber === prev.capNumber &&
         next.minimumDeposit === prev.minimumDeposit &&
         next.installmentAmount === prev.installmentAmount &&
         next.numberOfInstallmentsMonths === prev.numberOfInstallmentsMonths &&
@@ -480,6 +515,11 @@ export function PosPage() {
 
   const htbNeedsCustomerSelection =
     saleType === "htb" && !htbCreditSelection?.creditApplicationId;
+  const hasSelectedCurrency =
+    currencyId !== "" && currencies.some((c) => String(c.id) === String(currencyId));
+  const hasSelectedCustomer =
+    saleType === "htb" ||
+    (customerId !== "" && customers.some((c) => String(c.id) === String(customerId)));
 
   const missingCheckoutItems = useMemo(() => {
     const missing = [];
@@ -494,8 +534,10 @@ export function PosPage() {
       missing.push("Configure the default branch on the server (D365_BRANCH_ID GUID mapped to location.d365_id).");
     }
     if (htbNeedsCustomerSelection) missing.push("Select an HTB customer (credit application).");
+    if (!hasSelectedCurrency) missing.push("Select a currency for this sale.");
+    if (!hasSelectedCustomer) missing.push("Select a customer for this sale.");
     return missing;
-  }, [cartLines.length, checkoutLoading, loading, multiStore, posSettings, htbNeedsCustomerSelection]);
+  }, [cartLines.length, checkoutLoading, hasSelectedCurrency, hasSelectedCustomer, htbNeedsCustomerSelection, loading, multiStore, posSettings]);
 
   const checkoutDisabled = missingCheckoutItems.length > 0;
 
@@ -753,6 +795,7 @@ export function PosPage() {
             : customerId === ""
               ? null
               : parseInt(customerId, 10),
+        currency_id: parseInt(currencyId, 10),
         sale_type: saleType,
         items: cartLines.map((l) => ({
           product_id: l.product_id,
@@ -1049,6 +1092,7 @@ export function PosPage() {
                   <table className="pos-d365-table">
                     <thead>
                       <tr>
+                        <th scope="col">Cap Number</th>
                         <th scope="col">First name</th>
                         <th scope="col">Last name</th>
                         <th scope="col">National ID</th>
@@ -1074,6 +1118,7 @@ export function PosPage() {
                           key={row.id || JSON.stringify(row.fields)}
                           className={selected ? "pos-d365-row--selected" : undefined}
                         >
+                          <td>{row.capNumber != null && row.capNumber !== "" ? String(row.capNumber) : "—"}</td>
                           <td>{row.customerFirstName != null && row.customerFirstName !== "" ? String(row.customerFirstName) : "—"}</td>
                           <td>{row.customerLastName != null && row.customerLastName !== "" ? String(row.customerLastName) : "—"}</td>
                           <td>{row.customerNationalId != null && row.customerNationalId !== "" ? String(row.customerNationalId) : "—"}</td>
@@ -1105,6 +1150,10 @@ export function PosPage() {
                                       ? String(row.customer365Guid).trim()
                                       : null,
                                   customerDisplayName: formatHtbCreditCustomerName(row),
+                                  capNumber:
+                                    row.capNumber != null && String(row.capNumber).trim() !== ""
+                                      ? String(row.capNumber).trim()
+                                      : null,
                                   minimumDeposit: row.minimumDeposit ?? null,
                                   installmentAmount: row.installmentAmount ?? null,
                                   numberOfInstallmentsMonths: row.numberOfInstallmentsMonths ?? null,
@@ -1267,6 +1316,10 @@ export function PosPage() {
                     <p className="pos-htb-selection-name">{htbCreditSelection.customerDisplayName}</p>
                     <dl className="pos-htb-selection-meta pos-htb-selection-meta--amounts">
                       <div>
+                        <dt>Cap number</dt>
+                        <dd>{htbCreditSelection.capNumber ?? "—"}</dd>
+                      </div>
+                      <div>
                         <dt>Number of installments (months)</dt>
                         <dd>{htbCreditSelection.numberOfInstallmentsMonths ?? "—"}</dd>
                       </div>
@@ -1291,15 +1344,34 @@ export function PosPage() {
                 )}
               </div>
             ) : null}
+            <label className="field">
+              <span className="field-label">Currency</span>
+              <select
+                className="input"
+                value={currencyId}
+                onChange={(e) => setCurrencyId(e.target.value)}
+                required
+              >
+                <option value="">— Select currency —</option>
+                {currencies.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.code}
+                    {c.symbol ? ` (${c.symbol})` : ""}
+                    {c.is_default ? " · default" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
             {saleType !== "htb" ? (
               <label className="field">
-                <span className="field-label">Customer (optional)</span>
+                <span className="field-label">Customer</span>
                 <select
                   className="input"
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
+                  required
                 >
-                  <option value="">Walk-in</option>
+                  <option value="">— Select customer —</option>
                   {customers.map((c) => (
                     <option key={c.id} value={String(c.id)}>
                       {c.name || `Customer #${c.id}`}

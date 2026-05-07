@@ -4,6 +4,7 @@ import { useTheme } from "../context/ThemeContext";
 const nav = [
   { to: "/pos", label: "POS" },
   { to: "/categories", label: "Categories" },
+  { to: "/currencies", label: "Currencies" },
   { to: "/locations", label: "Locations" },
   { to: "/products", label: "Products" },
   { to: "/customers", label: "Customers" },

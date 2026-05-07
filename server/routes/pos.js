@@ -199,6 +199,11 @@ router.post("/checkout", async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "items must be a non-empty array" });
   }
+  const rawCurrencyId = req.body?.currency_id;
+  const parsedCurrencyId = parseInt(rawCurrencyId, 10);
+  if (!Number.isInteger(parsedCurrencyId) || parsedCurrencyId < 1) {
+    return res.status(400).json({ error: "Invalid currency_id" });
+  }
 
   const saleType = req.body?.sale_type;
   if (saleType === "htb") {
@@ -276,6 +281,13 @@ router.post("/checkout", async (req, res) => {
       if (!custChk.rowCount) {
         return res.status(400).json({ error: "Customer not found" });
       }
+    }
+    const currencyChk = await client.query(
+      "SELECT 1 FROM currency WHERE id = $1 AND COALESCE(is_active, true) = true",
+      [parsedCurrencyId]
+    );
+    if (!currencyChk.rowCount) {
+      return res.status(400).json({ error: "Selected currency is invalid or inactive" });
     }
 
     const pricedLines = [];
@@ -493,11 +505,12 @@ router.post("/checkout", async (req, res) => {
            location_id,
            total,
            status,
+           currency_id,
            creditapplication_id
          )
-         VALUES ($1, $2, $3, $4, 'completed', $5::uuid)
-         RETURNING id, invoice_number, customer_id, location_id, total, status, creditapplication_id, created_at`,
-        [invoiceNumber, customerId, locId, invoiceTotal, htbCreditApplicationId]
+         VALUES ($1, $2, $3, $4, 'completed', $5, $6::uuid)
+         RETURNING id, invoice_number, customer_id, location_id, total, status, currency_id, creditapplication_id, created_at`,
+        [invoiceNumber, customerId, locId, invoiceTotal, parsedCurrencyId, htbCreditApplicationId]
       );
       const invoice = invRows[0];
 

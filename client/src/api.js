@@ -77,6 +77,19 @@ export const api = {
     remove: (id) =>
       apiRequest(`/api/customers/${id}`, { method: "DELETE" }),
   },
+  currencies: {
+    list: () => apiRequest("/api/currencies"),
+    get: (id) => apiRequest(`/api/currencies/${id}`),
+    create: (data) =>
+      apiRequest("/api/currencies", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/currencies/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/currencies/${id}`, { method: "DELETE" }),
+  },
   pos: {
     settings: () => apiRequest("/api/pos/settings"),
     paymentMethods: () => apiRequest("/api/pos/payment-methods"),

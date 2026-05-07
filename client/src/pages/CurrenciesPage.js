@@ -3,10 +3,10 @@ import { api } from "../api";
 import { Modal } from "../components/Modal";
 
 const emptyForm = {
+  code: "",
   name: "",
-  phone: "",
-  email: "",
-  address: "",
+  symbol: "",
+  is_active: true,
   is_default: false,
 };
 
@@ -19,7 +19,7 @@ function formatDate(v) {
   }
 }
 
-export function CustomersPage() {
+export function CurrenciesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -32,10 +32,10 @@ export function CustomersPage() {
     setError("");
     setLoading(true);
     try {
-      const data = await api.customers.list();
+      const data = await api.currencies.list();
       setRows(data);
     } catch (e) {
-      setError(e.message || "Failed to load customers");
+      setError(e.message || "Failed to load currencies");
     } finally {
       setLoading(false);
     }
@@ -54,10 +54,10 @@ export function CustomersPage() {
   function openEdit(row) {
     setEditingId(row.id);
     setForm({
+      code: row.code || "",
       name: row.name || "",
-      phone: row.phone || "",
-      email: row.email || "",
-      address: row.address || "",
+      symbol: row.symbol || "",
+      is_active: Boolean(row.is_active),
       is_default: Boolean(row.is_default),
     });
     setModalOpen(true);
@@ -69,15 +69,16 @@ export function CustomersPage() {
     setError("");
     try {
       const payload = {
+        code: form.code.trim().toUpperCase(),
         name: form.name,
-        phone: form.phone || null,
-        email: form.email || null,
-        address: form.address || null,
+        symbol: form.symbol?.trim() || null,
+        is_active: form.is_active,
+        is_default: form.is_default,
       };
       if (editingId) {
-        await api.customers.update(editingId, payload);
+        await api.currencies.update(editingId, payload);
       } else {
-        await api.customers.create(payload);
+        await api.currencies.create(payload);
       }
       setModalOpen(false);
       await load();
@@ -89,10 +90,10 @@ export function CustomersPage() {
   }
 
   async function handleDelete(row) {
-    if (!window.confirm(`Delete customer “${row.name || row.id}”?`)) return;
+    if (!window.confirm(`Delete currency "${row.code}"?`)) return;
     setError("");
     try {
-      await api.customers.remove(row.id);
+      await api.currencies.remove(row.id);
       await load();
     } catch (err) {
       setError(err.message || "Delete failed");
@@ -103,11 +104,11 @@ export function CustomersPage() {
     <div className="page">
       <header className="page-header">
         <div>
-          <h1>Customers</h1>
-          <p className="page-lead">Contact details for invoicing and orders.</p>
+          <h1>Currencies</h1>
+          <p className="page-lead">Maintain available transaction currencies.</p>
         </div>
         <button type="button" className="btn btn-primary" onClick={openCreate}>
-          Add customer
+          Add currency
         </button>
       </header>
 
@@ -125,11 +126,11 @@ export function CustomersPage() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th>Code</th>
                   <th>Name</th>
+                  <th>Symbol</th>
+                  <th>Active</th>
                   <th>Default</th>
-                  <th>Phone</th>
-                  <th>Email</th>
-                  <th>Address</th>
                   <th>Created</th>
                   <th className="col-actions">Actions</th>
                 </tr>
@@ -138,17 +139,19 @@ export function CustomersPage() {
                 {rows.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="muted">
-                      No customers yet.
+                      No currencies yet.
                     </td>
                   </tr>
                 ) : (
                   rows.map((r) => (
                     <tr key={r.id}>
+                      <td>
+                        <code>{r.code}</code>
+                      </td>
                       <td>{r.name}</td>
+                      <td>{r.symbol || "—"}</td>
+                      <td>{r.is_active ? "Yes" : "No"}</td>
                       <td>{r.is_default ? "Yes" : "No"}</td>
-                      <td>{r.phone || "—"}</td>
-                      <td>{r.email || "—"}</td>
-                      <td className="cell-clip">{r.address || "—"}</td>
                       <td className="muted nowrap">{formatDate(r.created_at)}</td>
                       <td className="col-actions">
                         <button
@@ -176,7 +179,7 @@ export function CustomersPage() {
       </div>
 
       <Modal
-        title={editingId ? "Edit customer" : "New customer"}
+        title={editingId ? "Edit currency" : "New currency"}
         isOpen={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
         footer={
@@ -191,7 +194,7 @@ export function CustomersPage() {
             </button>
             <button
               type="submit"
-              form="customer-form"
+              form="currency-form"
               className="btn btn-primary"
               disabled={saving}
             >
@@ -200,7 +203,24 @@ export function CustomersPage() {
           </>
         }
       >
-        <form id="customer-form" onSubmit={handleSubmit} className="form-grid">
+        <form id="currency-form" onSubmit={handleSubmit} className="form-grid">
+          <label className="field">
+            <span className="field-label">Code (3 letters)</span>
+            <input
+              className="input"
+              value={form.code}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  code: e.target.value.toUpperCase().slice(0, 3),
+                })
+              }
+              required
+              minLength={3}
+              maxLength={3}
+              autoFocus
+            />
+          </label>
           <label className="field">
             <span className="field-label">Name</span>
             <input
@@ -208,43 +228,31 @@ export function CustomersPage() {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
-              autoFocus
             />
           </label>
           <label className="field">
-            <span className="field-label">Phone</span>
+            <span className="field-label">Symbol</span>
             <input
               className="input"
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              value={form.symbol}
+              onChange={(e) => setForm({ ...form, symbol: e.target.value.slice(0, 5) })}
             />
           </label>
-          <label className="field">
-            <span className="field-label">Email</span>
+          <label className="field field--checkbox">
             <input
-              className="input"
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
             />
+            <span>Active</span>
           </label>
-          <label className="field field--full">
-            <span className="field-label">Address</span>
-            <textarea
-              className="input textarea"
-              rows={3}
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-            />
-          </label>
-          <label className="field field--full">
-            <span className="field-label">Default customer</span>
+          <label className="field field--checkbox">
             <input
-              className="input"
-              value={form.is_default ? "Yes" : "No"}
-              disabled
-              readOnly
+              type="checkbox"
+              checked={form.is_default}
+              onChange={(e) => setForm({ ...form, is_default: e.target.checked })}
             />
+            <span>Default currency</span>
           </label>
         </form>
       </Modal>

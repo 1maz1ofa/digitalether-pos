@@ -24,6 +24,7 @@ let cachedBranchNav = { key: null, navName: null };
 let cachedInstallmentsNav = { key: null, navName: null };
 const CREDIT_APPLICATION_SELECT_COLUMNS = [
   "htb365_creditapplicationid",
+  "htb365_id",
   "htb365_status",
   "htb365_approveddate",
   "htb365_minimumdeposit",
@@ -719,6 +720,7 @@ function mapRecord(row, { customerNavNames } = {}) {
   const installments = installmentsNav ? row[installmentsNav] : null;
   return {
     id: idKey ? row[idKey] : null,
+    capNumber: row.htb365_id ?? null,
     name: nameKey ? row[nameKey] : null,
     status: row.htb365_status,
     statusLabel: statusLabelKey ? row[statusLabelKey] : null,
