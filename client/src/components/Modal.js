@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-export function Modal({ title, isOpen, onClose, children, footer }) {
+export function Modal({ title, isOpen, onClose, children, footer, panelClassName = "" }) {
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e) => {
@@ -15,7 +15,7 @@ export function Modal({ title, isOpen, onClose, children, footer }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
-        className="modal-panel"
+        className={["modal-panel", panelClassName].filter(Boolean).join(" ")}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"

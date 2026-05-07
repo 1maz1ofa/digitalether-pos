@@ -134,6 +134,7 @@ export function PosPage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [posSettings, setPosSettings] = useState(null);
+  const [paymentMethods, setPaymentMethods] = useState([]);
   const [customerId, setCustomerId] = useState("");
   const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
@@ -142,6 +143,10 @@ export function PosPage() {
   const [lastReceipt, setLastReceipt] = useState(null);
   const [pickProduct, setPickProduct] = useState(null);
   const [pickStoreId, setPickStoreId] = useState("");
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentAmountsByMethod, setPaymentAmountsByMethod] = useState({});
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentError, setPaymentError] = useState("");
   const [saleType, setSaleType] = useState("cash");
   const [completedSaleTypeLabel, setCompletedSaleTypeLabel] = useState(null);
   const [d365Records, setD365Records] = useState([]);
@@ -162,16 +167,18 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const [p, loc, cust, settings] = await Promise.all([
+      const [p, loc, cust, settings, methods] = await Promise.all([
         api.products.list(),
         api.locations.list(),
         api.customers.list(),
         api.pos.settings(),
+        api.pos.paymentMethods(),
       ]);
       setProducts(p);
       setLocations(loc.filter((l) => l.is_active !== false));
       setCustomers(cust);
       setPosSettings(settings);
+      setPaymentMethods(Array.isArray(methods) ? methods : []);
     } catch (e) {
       setError(e.message || "Failed to load");
     } finally {
@@ -435,6 +442,60 @@ export function PosPage() {
     [cartLines]
   );
 
+  const displayPaymentMethods = useMemo(
+    () => paymentMethods.filter((m) => String(m.code || "").trim().toUpperCase() !== "LOAN"),
+    [paymentMethods]
+  );
+
+  useEffect(() => {
+    if (!paymentModalOpen) return;
+    const next = {};
+    for (const method of displayPaymentMethods) {
+      next[String(method.id)] = "0";
+    }
+    setPaymentAmountsByMethod(next);
+  }, [paymentModalOpen, displayPaymentMethods]);
+
+  const totalPaymentsApplied = useMemo(() => {
+    return displayPaymentMethods.reduce((sum, method) => {
+      const raw = paymentAmountsByMethod[String(method.id)];
+      if (raw == null || raw === "") return sum;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) return sum;
+      return sum + n;
+    }, 0);
+  }, [paymentAmountsByMethod, displayPaymentMethods]);
+
+  const paymentShortfall = useMemo(() => {
+    const roundedSubtotal = Number(subtotal.toFixed(2));
+    const roundedPaid = Number(totalPaymentsApplied.toFixed(2));
+    return Math.max(0, Number((roundedSubtotal - roundedPaid).toFixed(2)));
+  }, [subtotal, totalPaymentsApplied]);
+
+  const paymentChangeDue = useMemo(() => {
+    const roundedSubtotal = Number(subtotal.toFixed(2));
+    const roundedPaid = Number(totalPaymentsApplied.toFixed(2));
+    return Math.max(0, Number((roundedPaid - roundedSubtotal).toFixed(2)));
+  }, [subtotal, totalPaymentsApplied]);
+
+  const loanApplied = useMemo(() => {
+    if (saleType !== "htb") return 0;
+    const roundedSubtotal = Number(subtotal.toFixed(2));
+    const roundedPaid = Number(totalPaymentsApplied.toFixed(2));
+    return Math.max(0, Number((roundedSubtotal - roundedPaid).toFixed(2)));
+  }, [saleType, subtotal, totalPaymentsApplied]);
+
+  const htbMaxDepositPercent = useMemo(() => {
+    const raw = Number(posSettings?.htbMaxDepositPercent);
+    if (!Number.isFinite(raw) || raw <= 0 || raw >= 100) return 50;
+    return Number(raw.toFixed(2));
+  }, [posSettings]);
+
+  const htbMaxDepositAmount = useMemo(() => {
+    if (saleType !== "htb") return 0;
+    return Number(((subtotal * htbMaxDepositPercent) / 100).toFixed(2));
+  }, [saleType, subtotal, htbMaxDepositPercent]);
+
   function addToCart(product) {
     setLastReceipt(null);
     const key = cartKey(product.id, null, false);
@@ -552,24 +613,34 @@ export function PosPage() {
     setCart(new Map());
   }
 
-  async function handleCheckout() {
+  async function handleCheckout(paymentPayload) {
+    const fromPaymentModal = Boolean(paymentPayload);
     setError("");
+    setPaymentError("");
     setLastReceipt(null);
     setCompletedSaleTypeLabel(null);
     if (!multiStore && toPositiveInt(posSettings?.defaultLocationId) == null) {
-      setError("Default branch is not configured on the server (D365_BRANCH_ID GUID mapped to location.d365_id).");
+      const msg = "Default branch is not configured on the server (D365_BRANCH_ID GUID mapped to location.d365_id).";
+      if (fromPaymentModal) setPaymentError(msg);
+      else setError(msg);
       return;
     }
     if (htbNeedsCustomerSelection) {
-      setError("Select an HTB customer (credit application) before checkout.");
+      const msg = "Select an HTB customer (credit application) before checkout.";
+      if (fromPaymentModal) setPaymentError(msg);
+      else setError(msg);
       return;
     }
     if (cartLines.length === 0) {
-      setError("Add at least one item to the cart.");
+      const msg = "Add at least one item to the cart.";
+      if (fromPaymentModal) setPaymentError(msg);
+      else setError(msg);
       return;
     }
     if (multiStore && cartLines.some((l) => l.location_id == null || !Number.isInteger(l.location_id))) {
-      setError("Each cart line needs a store. Try toggling multiple stores off and on to refresh lines.");
+      const msg = "Each cart line needs a store. Try toggling multiple stores off and on to refresh lines.";
+      if (fromPaymentModal) setPaymentError(msg);
+      else setError(msg);
       return;
     }
     setCheckoutLoading(true);
@@ -594,13 +665,19 @@ export function PosPage() {
               d365_minimum_deposit: htbCreditSelection.minimumDeposit,
             }
           : {}),
+        ...(paymentPayload || {}),
       };
       const result = await api.pos.checkout(payload);
       setCompletedSaleTypeLabel(saleTypeLabel(saleType));
       setLastReceipt(result);
+      setPaymentModalOpen(false);
+      setPaymentAmountsByMethod({});
+      setPaymentReference("");
       clearCart();
     } catch (e) {
-      setError(e.message || "Checkout failed");
+      const msg = e.message || "Checkout failed";
+      if (fromPaymentModal) setPaymentError(msg);
+      else setError(msg);
     } finally {
       setCheckoutLoading(false);
     }
@@ -611,7 +688,64 @@ export function PosPage() {
       setMissingCheckoutInfoOpen(true);
       return;
     }
-    handleCheckout();
+    if (!displayPaymentMethods.length) {
+      setPaymentError("No active payment methods found. Add at least one active method in payment_methods.");
+      setPaymentModalOpen(true);
+      return;
+    }
+    setError("");
+    setPaymentError("");
+    setPaymentModalOpen(true);
+  }
+
+  function closePaymentModal() {
+    setPaymentModalOpen(false);
+    setPaymentError("");
+  }
+
+  function submitPaymentAndCheckout() {
+    const payments = [];
+    for (const method of displayPaymentMethods) {
+      const methodId = Number(method.id);
+      if (!Number.isInteger(methodId) || methodId < 1) continue;
+      const raw = paymentAmountsByMethod[String(method.id)];
+      if (raw == null || String(raw).trim() === "") continue;
+      const amount = Number(raw);
+      if (!Number.isFinite(amount) || amount < 0) {
+        setPaymentError(`Enter a valid amount for ${method.name}.`);
+        return;
+      }
+      if (amount === 0) continue;
+      payments.push({
+        payment_method_id: methodId,
+        amount: Number(amount.toFixed(2)),
+        reference: paymentReference.trim() || null,
+      });
+    }
+    if (!payments.length) {
+      setPaymentError("Enter at least one payment amount greater than zero.");
+      return;
+    }
+    const roundedAmount = Number(payments.reduce((s, p) => s + p.amount, 0).toFixed(2));
+    const roundedSubtotal = Number(subtotal.toFixed(2));
+    if (saleType === "htb" && roundedAmount > roundedSubtotal) {
+      setPaymentError("HTB deposit cannot exceed invoice total. No change can be given on HTB sales.");
+      return;
+    }
+    if (saleType === "htb" && roundedAmount > htbMaxDepositAmount) {
+      setPaymentError(
+        `HTB deposit cannot exceed ${htbMaxDepositPercent.toFixed(2)}% (${money(
+          htbMaxDepositAmount
+        )}) of the invoice total.`
+      );
+      return;
+    }
+    if (saleType !== "htb" && roundedAmount < roundedSubtotal) {
+      const remaining = Number((roundedSubtotal - roundedAmount).toFixed(2));
+      setPaymentError(`Payments are short by ${money(remaining)}. Add more to complete this sale.`);
+      return;
+    }
+    handleCheckout(payments.length === 1 ? { payment: payments[0] } : { payments });
   }
 
   return (
@@ -630,7 +764,7 @@ export function PosPage() {
         </div>
       </header>
 
-      {error ? (
+      {error && !paymentModalOpen ? (
         <div className="alert alert-error" role="alert">
           {error}
         </div>
@@ -1219,6 +1353,112 @@ export function PosPage() {
             </label>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        title={saleType === "htb" ? "Take a deposit" : "Take payment"}
+        isOpen={paymentModalOpen}
+        onClose={closePaymentModal}
+        panelClassName="modal-panel--payment"
+        footer={
+          <>
+            <button type="button" className="btn btn-secondary" onClick={closePaymentModal}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={checkoutLoading}
+              onClick={submitPaymentAndCheckout}
+            >
+              {checkoutLoading ? "Processing…" : "Confirm payment"}
+            </button>
+          </>
+        }
+      >
+        <div className="form-grid pos-payment-modal">
+          {paymentError ? (
+            <div className="alert alert-error" role="alert">
+              {paymentError}
+            </div>
+          ) : null}
+          <p className="muted pos-payment-modal-intro" style={{ margin: 0 }}>
+            {saleType === "htb"
+              ? `Record one or more deposit amounts before completing the sale (max ${htbMaxDepositPercent.toFixed(
+                  2
+                )}% of invoice total).`
+              : "Record one or more payment amounts before completing the sale."}
+          </p>
+          <div className="pos-payment-grid" role="table" aria-label="Payment method amounts">
+            <div className="pos-payment-grid-head" role="row">
+              <span role="columnheader">Payment method</span>
+              <span role="columnheader">Amount</span>
+            </div>
+            {displayPaymentMethods.map((method) => (
+              <label key={method.id} className="pos-payment-grid-row" role="row">
+                <span className="pos-payment-grid-method" role="cell">
+                  {method.name}
+                </span>
+                <span role="cell">
+                  <input
+                    className="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={paymentAmountsByMethod[String(method.id)] ?? ""}
+                    onChange={(e) =>
+                      setPaymentAmountsByMethod((prev) => ({
+                        ...prev,
+                        [String(method.id)]: e.target.value,
+                      }))
+                    }
+                    placeholder="0.00"
+                    aria-label={`${method.name} amount`}
+                  />
+                </span>
+              </label>
+            ))}
+          </div>
+          <label className="field">
+            <span className="field-label">Reference (optional)</span>
+            <input
+              className="input"
+              type="text"
+              value={paymentReference}
+              onChange={(e) => setPaymentReference(e.target.value)}
+              placeholder="Receipt / transaction id"
+            />
+          </label>
+          <div className="pos-payment-summary" aria-live="polite">
+            <p className="muted" style={{ margin: 0 }}>
+              Invoice value: <strong>{money(subtotal)}</strong>
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              {saleType === "htb" ? "Deposit taken" : "Total payments applied"}:{" "}
+              <strong>{money(totalPaymentsApplied)}</strong>
+            </p>
+            {saleType === "htb" ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Loan Applied: <strong>{money(loanApplied)}</strong>
+              </p>
+            ) : null}
+            {saleType === "htb" ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Max deposit allowed: <strong>{money(htbMaxDepositAmount)}</strong>
+              </p>
+            ) : null}
+            {saleType !== "htb" && paymentShortfall > 0 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Amount remaining: <strong>{money(paymentShortfall)}</strong>
+              </p>
+            ) : null}
+            {saleType !== "htb" && paymentChangeDue > 0 ? (
+              <p className="muted pos-payment-summary-change" style={{ margin: 0 }}>
+                Change due: <strong>{money(paymentChangeDue)}</strong>
+              </p>
+            ) : null}
+          </div>
+        </div>
       </Modal>
     </div>
   );

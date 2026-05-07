@@ -79,6 +79,7 @@ export const api = {
   },
   pos: {
     settings: () => apiRequest("/api/pos/settings"),
+    paymentMethods: () => apiRequest("/api/pos/payment-methods"),
     checkout: (data) =>
       apiRequest("/api/pos/checkout", {
         method: "POST",

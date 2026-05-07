@@ -13,6 +13,28 @@ function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+function moneyToCents(n) {
+  return Math.round(Number(n) * 100);
+}
+
+function safeText(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text === "" ? null : text;
+}
+
+function readHtbMaxDepositPercent() {
+  const raw = process.env.HTB_MAX_DEPOSIT_PERCENT;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return 50;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 100) {
+    return null;
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
 function branchGuidFromEnv() {
   const raw =
     process.env.D365_BRANCH_ID ??
@@ -75,10 +97,31 @@ function isDuplicateHtbCreditApplicationError(err) {
 router.get("/settings", async (req, res) => {
   try {
     const fromEnv = await defaultLocationFromEnv(pool);
+    const htbMaxDepositPercent = readHtbMaxDepositPercent();
+    if (htbMaxDepositPercent === null) {
+      return res.status(500).json({
+        error: "HTB_MAX_DEPOSIT_PERCENT must be a number greater than 0 and less than 100.",
+      });
+    }
     res.json({
       defaultLocationId: fromEnv?.id ?? null,
       branchName: fromEnv?.name || fromEnv?.code || null,
+      htbMaxDepositPercent,
     });
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
+router.get("/payment-methods", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, code, name
+       FROM payment_methods
+       WHERE COALESCE(is_active, true) = true
+       ORDER BY name ASC, id ASC`
+    );
+    res.json(rows);
   } catch (err) {
     sendPgError(res, err);
   }
@@ -119,6 +162,39 @@ router.post("/checkout", async (req, res) => {
     if (!d365Configured()) {
       return res.status(503).json({ error: d365ConfigError() });
     }
+  }
+
+  const rawPayment = req.body?.payment;
+  const rawPayments = req.body?.payments;
+  let normalizedPayments = [];
+  if (Array.isArray(rawPayments)) {
+    normalizedPayments = rawPayments;
+  } else if (rawPayment && typeof rawPayment === "object" && !Array.isArray(rawPayment)) {
+    normalizedPayments = [rawPayment];
+  }
+  const parsedPayments = [];
+  for (let idx = 0; idx < normalizedPayments.length; idx += 1) {
+    const payment = normalizedPayments[idx];
+    const parsedMethod = parseInt(payment?.payment_method_id, 10);
+    if (!Number.isInteger(parsedMethod) || parsedMethod < 1) {
+      return res.status(400).json({ error: `payments[${idx}].payment_method_id must be a valid id` });
+    }
+    const parsedAmount = Number(payment?.amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ error: `payments[${idx}].amount must be greater than zero` });
+    }
+    parsedPayments.push({
+      payment_method_id: parsedMethod,
+      amount: roundMoney(parsedAmount),
+      reference: safeText(payment?.reference),
+    });
+  }
+  normalizedPayments = parsedPayments;
+  const htbMaxDepositPercent = readHtbMaxDepositPercent();
+  if (saleType === "htb" && htbMaxDepositPercent === null) {
+    return res.status(500).json({
+      error: "HTB_MAX_DEPOSIT_PERCENT must be a number greater than 0 and less than 100.",
+    });
   }
 
   const client = await pool.connect();
@@ -212,6 +288,35 @@ router.post("/checkout", async (req, res) => {
       }
     }
 
+    let loanPaymentMethodId = null;
+    if (saleType === "htb") {
+      const loanMethodRes = await client.query(
+        `SELECT id
+         FROM payment_methods
+         WHERE COALESCE(is_active, true) = true
+           AND UPPER(COALESCE(code, '')) = 'LOAN'
+         ORDER BY id ASC
+         LIMIT 1`
+      );
+      if (loanMethodRes.rowCount > 0) {
+        loanPaymentMethodId = Number(loanMethodRes.rows[0].id);
+      }
+    }
+
+    if (normalizedPayments.length > 0) {
+      const methodIds = [...new Set(normalizedPayments.map((p) => p.payment_method_id))];
+      const methodChk = await client.query(
+        `SELECT id
+         FROM payment_methods
+         WHERE id = ANY($1::int[])
+           AND COALESCE(is_active, true) = true`,
+        [methodIds]
+      );
+      if (methodChk.rowCount !== methodIds.length) {
+        return res.status(400).json({ error: "One or more selected payment methods are invalid or inactive" });
+      }
+    }
+
     const byLocation = new Map();
     for (const L of pricedLines) {
       if (!byLocation.has(L.locationId)) {
@@ -274,8 +379,47 @@ router.post("/checkout", async (req, res) => {
 
     const invoices = [];
     let invIndex = 0;
+    const grandTotal = roundMoney(pricedLines.reduce((s, L) => s + L.lineTotal, 0));
+    const paymentsTotal = roundMoney(normalizedPayments.reduce((s, p) => s + p.amount, 0));
+    if (saleType !== "htb" && normalizedPayments.length > 0 && paymentsTotal !== grandTotal) {
+      return res.status(400).json({
+        error: `Payment amount (${paymentsTotal.toFixed(2)}) must equal sale total (${grandTotal.toFixed(2)}).`,
+      });
+    }
+    if (saleType === "htb" && normalizedPayments.length > 0 && paymentsTotal > grandTotal) {
+      return res.status(400).json({
+        error: `Deposit amount (${paymentsTotal.toFixed(2)}) cannot exceed sale total (${grandTotal.toFixed(2)}).`,
+      });
+    }
+    if (saleType === "htb" && normalizedPayments.length > 0) {
+      const maxDeposit = roundMoney((grandTotal * htbMaxDepositPercent) / 100);
+      if (paymentsTotal > maxDeposit) {
+        return res.status(400).json({
+          error: `HTB deposit (${paymentsTotal.toFixed(2)}) cannot exceed ${htbMaxDepositPercent.toFixed(
+            2
+          )}% of invoice total (${maxDeposit.toFixed(2)}).`,
+        });
+      }
+    }
+    if (saleType === "htb" && normalizedPayments.length > 0 && paymentsTotal < grandTotal) {
+      if (!Number.isInteger(loanPaymentMethodId) || loanPaymentMethodId < 1) {
+        return res.status(400).json({
+          error: "HTB balance requires an active LOAN payment method code.",
+        });
+      }
+      normalizedPayments.push({
+        payment_method_id: loanPaymentMethodId,
+        amount: roundMoney(grandTotal - paymentsTotal),
+        reference: null,
+      });
+    }
+    const paymentPool = normalizedPayments.map((p) => ({
+      ...p,
+      amountCents: moneyToCents(p.amount),
+    }));
     for (const [locId, groupLines] of byLocation) {
       const invoiceTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineTotal, 0));
+      const invoiceTotalCents = moneyToCents(invoiceTotal);
       const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${invIndex++}`;
 
       const { rows: invRows } = await client.query(
@@ -302,6 +446,51 @@ router.post("/checkout", async (req, res) => {
           [invoice.id, L.productId, L.qty, L.unitPrice, L.lineTotal]
         );
         savedItems.push(itemRows[0]);
+      }
+      if (paymentPool.length > 0) {
+        const invoicePayments = [];
+        if (byLocation.size === 1) {
+          for (const p of paymentPool) {
+            invoicePayments.push({
+              payment_method_id: p.payment_method_id,
+              amount: p.amount,
+              reference: p.reference,
+            });
+          }
+        } else if (paymentPool.length === 1) {
+          invoicePayments.push({
+            payment_method_id: paymentPool[0].payment_method_id,
+            amount: invoiceTotal,
+            reference: paymentPool[0].reference,
+          });
+        } else {
+          let remainingInvoiceCents = invoiceTotalCents;
+          for (const p of paymentPool) {
+            if (remainingInvoiceCents <= 0) break;
+            if (p.amountCents <= 0) continue;
+            const allocationCents = Math.min(remainingInvoiceCents, p.amountCents);
+            if (allocationCents <= 0) continue;
+            p.amountCents -= allocationCents;
+            remainingInvoiceCents -= allocationCents;
+            invoicePayments.push({
+              payment_method_id: p.payment_method_id,
+              amount: roundMoney(allocationCents / 100),
+              reference: p.reference,
+            });
+          }
+          if (remainingInvoiceCents !== 0) {
+            return res.status(400).json({
+              error: "Could not allocate split payments across invoice locations.",
+            });
+          }
+        }
+        for (const p of invoicePayments) {
+        await client.query(
+          `INSERT INTO payments (invoice_id, payment_method_id, amount, reference)
+           VALUES ($1, $2, $3, $4)`,
+            [invoice.id, p.payment_method_id, p.amount, p.reference]
+        );
+        }
       }
       invoices.push({ invoice, items: savedItems });
     }
