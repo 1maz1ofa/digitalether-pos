@@ -388,6 +388,7 @@ router.post("/checkout", async (req, res) => {
 
     let htbCustomerRecord = null;
     let htbCreditApplicationId = null;
+    let htbCapNumber = null;
     if (saleType === "htb") {
       htbCustomerRecord = await getFinalApprovedCreditApplicationById(
         req.body?.d365_credit_application_id
@@ -409,6 +410,7 @@ router.post("/checkout", async (req, res) => {
         htbCustomerRecord.id != null && String(htbCustomerRecord.id).trim() !== ""
           ? String(htbCustomerRecord.id).trim().toLowerCase()
           : null;
+      htbCapNumber = safeText(htbCustomerRecord?.capNumber);
     }
 
     await client.query("BEGIN");
@@ -493,6 +495,19 @@ router.post("/checkout", async (req, res) => {
       ...p,
       amountCents: moneyToCents(p.amount),
     }));
+    const distinctPaymentReferences = Array.from(
+      new Set(
+        paymentPool
+          .map((p) => safeText(p.reference))
+          .filter((reference) => reference !== null)
+      )
+    );
+    const invoiceReferenceNumber =
+      saleType === "htb" && htbCapNumber
+        ? htbCapNumber
+        : distinctPaymentReferences.length === 1
+          ? distinctPaymentReferences[0]
+          : null;
     for (const [locId, groupLines] of byLocation) {
       const invoiceTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineTotal, 0));
       const invoiceTotalCents = moneyToCents(invoiceTotal);
@@ -506,11 +521,20 @@ router.post("/checkout", async (req, res) => {
            total,
            status,
            currency_id,
-           creditapplication_id
+           creditapplication_id,
+           reference_number
          )
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6::uuid)
+         VALUES ($1, $2, $3, $4, 'completed', $5, $6::uuid, $7)
          RETURNING id, invoice_number, customer_id, location_id, total, status, currency_id, creditapplication_id, created_at`,
-        [invoiceNumber, customerId, locId, invoiceTotal, parsedCurrencyId, htbCreditApplicationId]
+        [
+          invoiceNumber,
+          customerId,
+          locId,
+          invoiceTotal,
+          parsedCurrencyId,
+          htbCreditApplicationId,
+          invoiceReferenceNumber,
+        ]
       );
       const invoice = invRows[0];
 
@@ -562,11 +586,11 @@ router.post("/checkout", async (req, res) => {
           }
         }
         for (const p of invoicePayments) {
-        await client.query(
-          `INSERT INTO payments (invoice_id, payment_method_id, amount, reference)
-           VALUES ($1, $2, $3, $4)`,
-            [invoice.id, p.payment_method_id, p.amount, p.reference]
-        );
+          await client.query(
+            `INSERT INTO payments (invoice_id, payment_method_id, amount)
+             VALUES ($1, $2, $3)`,
+            [invoice.id, p.payment_method_id, p.amount]
+          );
         }
       }
       invoices.push({ invoice, items: savedItems });
