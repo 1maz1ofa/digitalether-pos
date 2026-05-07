@@ -515,14 +515,36 @@ export function PosPage() {
     [paymentMethods]
   );
 
+  const htbRequiredDepositAmount = useMemo(() => {
+    if (saleType !== "htb" || !htbCreditSelection) return null;
+    return calculateHtbRequiredDeposit({
+      totalInvoiceAmount: subtotal,
+      installmentAmount: htbCreditSelection.installmentAmount,
+      numberOfInstallmentsMonths: htbCreditSelection.numberOfInstallmentsMonths,
+      interestRate: htbCreditSelection.interestRate,
+      insuranceRate: htbCreditSelection.insuranceRate,
+      funeralRate: htbCreditSelection.funeralRate,
+    });
+  }, [saleType, htbCreditSelection, subtotal]);
+
   useEffect(() => {
     if (!paymentModalOpen) return;
     const next = {};
     for (const method of displayPaymentMethods) {
       next[String(method.id)] = "0";
     }
+    if (saleType === "htb" && Number.isFinite(htbRequiredDepositAmount)) {
+      const cashMethod = displayPaymentMethods.find((method) => {
+        const code = String(method.code || "").trim().toUpperCase();
+        const name = String(method.name || "").trim().toLowerCase();
+        return code === "CASH" || name === "cash";
+      });
+      if (cashMethod) {
+        next[String(cashMethod.id)] = Number(htbRequiredDepositAmount).toFixed(2);
+      }
+    }
     setPaymentAmountsByMethod(next);
-  }, [paymentModalOpen, displayPaymentMethods]);
+  }, [paymentModalOpen, displayPaymentMethods, saleType, htbRequiredDepositAmount]);
 
   const totalPaymentsApplied = useMemo(() => {
     return displayPaymentMethods.reduce((sum, method) => {
@@ -564,17 +586,16 @@ export function PosPage() {
     return Number(((subtotal * htbMaxDepositPercent) / 100).toFixed(2));
   }, [saleType, subtotal, htbMaxDepositPercent]);
 
-  const htbRequiredDepositAmount = useMemo(() => {
-    if (saleType !== "htb" || !htbCreditSelection) return null;
-    return calculateHtbRequiredDeposit({
-      totalInvoiceAmount: subtotal,
-      installmentAmount: htbCreditSelection.installmentAmount,
-      numberOfInstallmentsMonths: htbCreditSelection.numberOfInstallmentsMonths,
-      interestRate: htbCreditSelection.interestRate,
-      insuranceRate: htbCreditSelection.insuranceRate,
-      funeralRate: htbCreditSelection.funeralRate,
-    });
-  }, [saleType, htbCreditSelection, subtotal]);
+  const roundedTotalPaymentsApplied = useMemo(
+    () => Number(totalPaymentsApplied.toFixed(2)),
+    [totalPaymentsApplied]
+  );
+  const htbDepositBelowMinimum =
+    saleType === "htb" &&
+    Number.isFinite(htbRequiredDepositAmount) &&
+    roundedTotalPaymentsApplied < htbRequiredDepositAmount;
+  const htbDepositAboveMaximum = saleType === "htb" && roundedTotalPaymentsApplied > htbMaxDepositAmount;
+  const htbDepositOutOfRange = htbDepositBelowMinimum || htbDepositAboveMaximum;
 
   function addToCart(product) {
     setLastReceipt(null);
@@ -1035,9 +1056,6 @@ export function PosPage() {
                         <th scope="col">Min. deposit</th>
                         <th scope="col">Installment amount</th>
                         <th scope="col">number of installments (months)</th>
-                        <th scope="col">Insurance rate</th>
-                        <th scope="col">Interest rate</th>
-                        <th scope="col">Funeral rate</th>
                         <th scope="col">Status</th>
                         <th scope="col">Approved date</th>
                         <th scope="col" className="pos-d365-col-actions">
@@ -1065,9 +1083,6 @@ export function PosPage() {
                           <td>{money(row.minimumDeposit)}</td>
                           <td>{money(row.installmentAmount)}</td>
                           <td>{row.numberOfInstallmentsMonths ?? "—"}</td>
-                          <td>{row.insuranceRate ?? "—"}</td>
-                          <td>{row.interestRate ?? "—"}</td>
-                          <td>{row.funeralRate ?? "—"}</td>
                           <td>{row.statusLabel ?? String(row.status ?? "—")}</td>
                           <td className="pos-d365-date">
                             {row.approvedDate
@@ -1266,18 +1281,6 @@ export function PosPage() {
                             ? money(htbRequiredDepositAmount)
                             : "—"}
                         </dd>
-                      </div>
-                      <div>
-                        <dt>Interest rate</dt>
-                        <dd>{htbCreditSelection.interestRate ?? "—"}</dd>
-                      </div>
-                      <div>
-                        <dt>Insurance rate</dt>
-                        <dd>{htbCreditSelection.insuranceRate ?? "—"}</dd>
-                      </div>
-                      <div>
-                        <dt>Funeral rate</dt>
-                        <dd>{htbCreditSelection.funeralRate ?? "—"}</dd>
                       </div>
                     </dl>
                   </div>
@@ -1496,7 +1499,7 @@ export function PosPage() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={checkoutLoading}
+              disabled={checkoutLoading || htbDepositOutOfRange}
               onClick={submitPaymentAndCheckout}
             >
               {checkoutLoading ? "Processing…" : "Confirm payment"}
@@ -1571,7 +1574,10 @@ export function PosPage() {
                 Max deposit allowed: <strong>{money(htbMaxDepositAmount)}</strong>
               </p>
             ) : null}
-            <p className="muted" style={{ margin: 0 }}>
+            <p
+              className={`muted${htbDepositOutOfRange ? " pos-payment-summary-alert" : ""}`}
+              style={{ margin: 0 }}
+            >
               {saleType === "htb" ? "Actual deposit" : "Total payments applied"}:{" "}
               <strong>{money(totalPaymentsApplied)}</strong>
             </p>

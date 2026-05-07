@@ -578,6 +578,11 @@ code {
   color: var(--text);
 }
 
+.pos-payment-summary-alert,
+.pos-payment-summary-alert strong {
+  color: #dc2626;
+}
+
 .pos-payment-summary-change strong {
   color: #16a34a;
 }

@@ -167,8 +167,8 @@ router.get("/payment-methods", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT id, code, name
        FROM payment_methods
-       WHERE COALESCE(is_active, true) = true
-       ORDER BY name ASC, id ASC`
+       WHERE COALESCE(active, 1) = 1
+       ORDER BY COALESCE(position, 2147483647) ASC, id ASC`
     );
     res.json(rows);
   } catch (err) {
@@ -342,9 +342,9 @@ router.post("/checkout", async (req, res) => {
       const loanMethodRes = await client.query(
         `SELECT id
          FROM payment_methods
-         WHERE COALESCE(is_active, true) = true
+         WHERE COALESCE(active, 1) = 1
            AND UPPER(COALESCE(code, '')) = 'LOAN'
-         ORDER BY id ASC
+         ORDER BY COALESCE(position, 2147483647) ASC, id ASC
          LIMIT 1`
       );
       if (loanMethodRes.rowCount > 0) {
@@ -358,7 +358,7 @@ router.post("/checkout", async (req, res) => {
         `SELECT id
          FROM payment_methods
          WHERE id = ANY($1::int[])
-           AND COALESCE(is_active, true) = true`,
+           AND COALESCE(active, 1) = 1`,
         [methodIds]
       );
       if (methodChk.rowCount !== methodIds.length) {
