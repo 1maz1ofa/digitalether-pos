@@ -72,6 +72,12 @@ function calculateRequiredHtbDeposit({
   return roundMoney(deposit);
 }
 
+function parseCreditApplicationMinimumDeposit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return roundMoney(n);
+}
+
 function readHtbMaxDepositPercent() {
   const raw = process.env.HTB_MAX_DEPOSIT_PERCENT;
   if (raw === undefined || raw === null || String(raw).trim() === "") {
@@ -176,6 +182,19 @@ router.get("/payment-methods", async (req, res) => {
   }
 });
 
+router.get("/sale-types", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT code, name, position
+       FROM sale_type
+       ORDER BY COALESCE(position, 2147483647) ASC, code ASC`
+    );
+    res.json(rows);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
 /**
  * POST /api/pos/checkout
  * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }],
@@ -205,7 +224,8 @@ router.post("/checkout", async (req, res) => {
     return res.status(400).json({ error: "Invalid currency_id" });
   }
 
-  const saleType = req.body?.sale_type;
+  const saleType = safeText(req.body?.sale_type)?.toLowerCase();
+  let saleTypeId = null;
   if (saleType === "htb") {
     const d365AppId = req.body?.d365_credit_application_id;
     if (d365AppId === undefined || d365AppId === null || String(d365AppId).trim() === "") {
@@ -288,6 +308,19 @@ router.post("/checkout", async (req, res) => {
     );
     if (!currencyChk.rowCount) {
       return res.status(400).json({ error: "Selected currency is invalid or inactive" });
+    }
+    if (saleType) {
+      const saleTypeRow = await client.query(
+        `SELECT id
+         FROM sale_type
+         WHERE LOWER(COALESCE(code, '')) = $1
+         LIMIT 1`,
+        [saleType]
+      );
+      if (!saleTypeRow.rowCount) {
+        return res.status(400).json({ error: "Invalid sale_type" });
+      }
+      saleTypeId = Number(saleTypeRow.rows[0].id);
     }
 
     const pricedLines = [];
@@ -455,14 +488,16 @@ router.post("/checkout", async (req, res) => {
       });
     }
     if (saleType === "htb" && normalizedPayments.length > 0) {
-      const requiredDeposit = calculateRequiredHtbDeposit({
-        totalInvoiceAmount: grandTotal,
-        installmentAmount: htbCustomerRecord?.installmentAmount,
-        numberOfInstallmentsMonths: htbCustomerRecord?.numberOfInstallmentsMonths,
-        interestRate: htbCustomerRecord?.interestRate,
-        insuranceRate: htbCustomerRecord?.insuranceRate,
-        funeralRate: htbCustomerRecord?.funeralRate,
-      });
+      const requiredDeposit =
+        parseCreditApplicationMinimumDeposit(htbCustomerRecord?.minimumDeposit) ??
+        calculateRequiredHtbDeposit({
+          totalInvoiceAmount: grandTotal,
+          installmentAmount: htbCustomerRecord?.installmentAmount,
+          numberOfInstallmentsMonths: htbCustomerRecord?.numberOfInstallmentsMonths,
+          interestRate: htbCustomerRecord?.interestRate,
+          insuranceRate: htbCustomerRecord?.insuranceRate,
+          funeralRate: htbCustomerRecord?.funeralRate,
+        });
       if (requiredDeposit != null && paymentsTotal < requiredDeposit) {
         return res.status(400).json({
           error: `HTB deposit (${paymentsTotal.toFixed(2)}) is below required minimum (${requiredDeposit.toFixed(
@@ -521,17 +556,19 @@ router.post("/checkout", async (req, res) => {
            total,
            status,
            currency_id,
+           sale_type_id,
            creditapplication_id,
            reference_number
          )
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6::uuid, $7)
-         RETURNING id, invoice_number, customer_id, location_id, total, status, currency_id, creditapplication_id, created_at`,
+         VALUES ($1, $2, $3, $4, 'completed', $5, $6, $7::uuid, $8)
+         RETURNING id, invoice_number, customer_id, location_id, total, status, currency_id, sale_type_id, creditapplication_id, created_at`,
         [
           invoiceNumber,
           customerId,
           locId,
           invoiceTotal,
           parsedCurrencyId,
+          saleTypeId,
           htbCreditApplicationId,
           invoiceReferenceNumber,
         ]

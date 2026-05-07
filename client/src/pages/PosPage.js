@@ -126,6 +126,12 @@ function calculateHtbRequiredDeposit({
   return Number(deposit.toFixed(2));
 }
 
+function parseCreditApplicationMinimumDeposit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Number(n.toFixed(2));
+}
+
 function toPositiveInt(value) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) return null;
@@ -144,14 +150,33 @@ function cartKey(productId, locationId, multiStore) {
 
 const UNCATEGORIZED_KEY = "__none__";
 
-const SALE_TYPES = [
+const DEFAULT_SALE_TYPES = [
   { value: "cash", label: "Cash" },
   { value: "laybye", label: "Laybye" },
   { value: "htb", label: "HTB" },
 ];
 
-function saleTypeLabel(value) {
-  return SALE_TYPES.find((t) => t.value === value)?.label ?? value;
+function normalizeSaleTypes(rows) {
+  if (!Array.isArray(rows)) return DEFAULT_SALE_TYPES;
+  const normalized = rows
+    .map((row) => ({
+      value: String(row?.code ?? "").trim().toLowerCase(),
+      label: String(row?.name ?? "").trim(),
+      position: Number(row?.position),
+    }))
+    .filter((row) => row.value !== "" && row.label !== "")
+    .sort((a, b) => {
+      const ap = Number.isFinite(a.position) ? a.position : Number.MAX_SAFE_INTEGER;
+      const bp = Number.isFinite(b.position) ? b.position : Number.MAX_SAFE_INTEGER;
+      if (ap !== bp) return ap - bp;
+      return a.value.localeCompare(b.value);
+    })
+    .map(({ value, label }) => ({ value, label }));
+  return normalized.length ? normalized : DEFAULT_SALE_TYPES;
+}
+
+function saleTypeLabel(value, saleTypes) {
+  return saleTypes.find((t) => t.value === value)?.label ?? value;
 }
 
 function categoryKey(product) {
@@ -213,6 +238,7 @@ export function PosPage() {
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentError, setPaymentError] = useState("");
   const [saleType, setSaleType] = useState("cash");
+  const [saleTypes, setSaleTypes] = useState(DEFAULT_SALE_TYPES);
   const [completedSaleTypeLabel, setCompletedSaleTypeLabel] = useState(null);
   const [d365Records, setD365Records] = useState([]);
   const [d365CreditSearch, setD365CreditSearch] = useState("");
@@ -232,13 +258,14 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const [p, loc, cust, settings, methods, currencyRows] = await Promise.all([
+      const [p, loc, cust, settings, methods, currencyRows, saleTypeRows] = await Promise.all([
         api.products.list(),
         api.locations.list(),
         api.customers.list(),
         api.pos.settings(),
         api.pos.paymentMethods(),
         api.currencies.list(),
+        api.pos.saleTypes(),
       ]);
       setProducts(p);
       setLocations(loc.filter((l) => l.is_active !== false));
@@ -267,6 +294,12 @@ export function PosPage() {
         if (defaultCurrency?.id != null) return String(defaultCurrency.id);
         const firstActive = activeCurrencies[0];
         return firstActive?.id != null ? String(firstActive.id) : "";
+      });
+      const normalizedSaleTypes = normalizeSaleTypes(saleTypeRows);
+      setSaleTypes(normalizedSaleTypes);
+      setSaleType((prev) => {
+        if (normalizedSaleTypes.some((x) => x.value === prev)) return prev;
+        return normalizedSaleTypes[0]?.value ?? "cash";
       });
     } catch (e) {
       setError(e.message || "Failed to load");
@@ -364,8 +397,19 @@ export function PosPage() {
   useEffect(() => {
     if (saleType === "htb") {
       setCustomerId("");
+      return;
     }
-  }, [saleType]);
+    setCustomerId((prev) => {
+      const activeCustomers = Array.isArray(customers) ? customers : [];
+      if (prev && activeCustomers.some((c) => String(c.id) === String(prev))) {
+        return String(prev);
+      }
+      const defaultCustomer = activeCustomers.find((c) => c.is_default);
+      if (defaultCustomer?.id != null) return String(defaultCustomer.id);
+      const firstCustomer = activeCustomers[0];
+      return firstCustomer?.id != null ? String(firstCustomer.id) : "";
+    });
+  }, [saleType, customers]);
 
   const locationNameById = useMemo(() => {
     const m = new Map();
@@ -559,6 +603,12 @@ export function PosPage() {
 
   const htbRequiredDepositAmount = useMemo(() => {
     if (saleType !== "htb" || !htbCreditSelection) return null;
+    const selectedMinimumDeposit = parseCreditApplicationMinimumDeposit(
+      htbCreditSelection.minimumDeposit
+    );
+    if (selectedMinimumDeposit != null) {
+      return selectedMinimumDeposit;
+    }
     return calculateHtbRequiredDeposit({
       totalInvoiceAmount: subtotal,
       installmentAmount: htbCreditSelection.installmentAmount,
@@ -812,7 +862,7 @@ export function PosPage() {
         ...(paymentPayload || {}),
       };
       const result = await api.pos.checkout(payload);
-      setCompletedSaleTypeLabel(saleTypeLabel(saleType));
+      setCompletedSaleTypeLabel(saleTypeLabel(saleType, saleTypes));
       setLastReceipt(result);
       setPaymentModalOpen(false);
       setPaymentAmountsByMethod({});
@@ -963,7 +1013,7 @@ export function PosPage() {
           <fieldset className="pos-sale-type pos-sale-type--bar">
             <legend className="pos-sale-type-bar-legend">Sale type</legend>
             <div className="pos-sale-type-radios">
-              {SALE_TYPES.map((opt) => (
+              {saleTypes.map((opt) => (
                 <label key={opt.value} className="pos-sale-type-option">
                   <input
                     type="radio"
@@ -978,7 +1028,7 @@ export function PosPage() {
             </div>
             <div className="pos-sale-type-current" aria-live="polite" aria-atomic="true">
               <span className="pos-sale-type-current-kicker">Selected</span>
-              <span className="pos-sale-type-current-label">{saleTypeLabel(saleType)}</span>
+              <span className="pos-sale-type-current-label">{saleTypeLabel(saleType, saleTypes)}</span>
             </div>
           </fieldset>
         </div>
