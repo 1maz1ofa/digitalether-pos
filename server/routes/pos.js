@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 const {
@@ -8,6 +9,45 @@ const {
 } = require("../services/d365Client");
 
 const router = express.Router();
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const HEX32_RE = /^[0-9a-fA-F]{32}$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Convert an internal identifier into an iDempiere-style 32-char uppercase hex id.
+ * UUIDs / 32-hex strings are normalized; anything else is MD5-hashed for a
+ * stable, deterministic surrogate (so subsequent exports of the same row match).
+ */
+function toIdempiereId(input) {
+  if (input === undefined || input === null) return null;
+  const text = String(input).trim();
+  if (text === "") return null;
+  if (UUID_RE.test(text)) return text.replace(/-/g, "").toUpperCase();
+  if (HEX32_RE.test(text)) return text.toUpperCase();
+  return crypto.createHash("md5").update(text).digest("hex").toUpperCase();
+}
+
+function envIdempiereId(name) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return null;
+  return toIdempiereId(trimmed);
+}
+
+function formatMoneyString(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n.toFixed(2);
+}
+
+function formatQtyString(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (Number.isInteger(n)) return String(n);
+  return String(Number(n.toFixed(4)));
+}
 
 function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -203,6 +243,146 @@ router.get("/sale-types", async (req, res) => {
        ORDER BY COALESCE(position, 2147483647) ASC, code ASC`
     );
     res.json(rows);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
+/**
+ * GET /api/pos/htb/export
+ * Returns completed HTB invoices created on a given date, formatted for iDempiere/ADempiere ingest.
+ * Query: ?date=YYYY-MM-DD (defaults to today, server local date)
+ * Shape: { invoices: [{ invoice, lines, payments }] }
+ *
+ * 32-char hex IDs are derived from existing identifiers:
+ *   - c_invoice_id   ← MD5(invoice_number)
+ *   - c_bpartner_id  ← customers.htb_id (UUID, dashes stripped) or MD5(customer.id)
+ *   - m_product_id   ← MD5(product.code) (or product.code if it is already a 32-hex/UUID)
+ *   - ad_org_id      ← location.d365_id (UUID) or env IDEMPIERE_AD_ORG_ID
+ *   - ad_client_id   ← env IDEMPIERE_AD_CLIENT_ID
+ */
+router.get("/htb/export", async (req, res) => {
+  try {
+    let dateParam = safeText(req.query?.date);
+    if (dateParam && !ISO_DATE_RE.test(dateParam)) {
+      return res.status(400).json({ error: "date must be in YYYY-MM-DD format" });
+    }
+    if (!dateParam) {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      dateParam = `${yyyy}-${mm}-${dd}`;
+    }
+
+    const adClientId = envIdempiereId("IDEMPIERE_AD_CLIENT_ID");
+    const adOrgIdFallback = envIdempiereId("IDEMPIERE_AD_ORG_ID");
+    const bpartnerFallback = envIdempiereId("IDEMPIERE_DEFAULT_BPARTNER_ID");
+
+    const sql = `
+      SELECT
+        i.id,
+        i.invoice_number,
+        i.reference_number,
+        i.total,
+        to_char(i.created_at, 'YYYY-MM-DD') AS dateinvoiced,
+        cu.id  AS customer_id,
+        cu.htb_id::text AS customer_htb_id,
+        cu.name AS customer_name,
+        cur.code AS currency_code,
+        loc.d365_id::text AS location_d365_id,
+        loc.code AS location_code,
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object(
+                       'quantity', ii.quantity,
+                       'total', ii.total,
+                       'product_code', p.code,
+                       'product_name', p.name
+                     ) ORDER BY ii.id
+                   )
+            FROM invoice_items ii
+            LEFT JOIN product p ON p.id = ii.product_id
+            WHERE ii.invoice_id = i.id
+          ),
+          '[]'::json
+        ) AS items,
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object(
+                       'amount', pay.amount,
+                       'payment_method_code', pm.code,
+                       'payment_method_name', pm.name
+                     ) ORDER BY pay.id
+                   )
+            FROM payments pay
+            LEFT JOIN payment_methods pm ON pm.id = pay.payment_method_id
+            WHERE pay.invoice_id = i.id
+          ),
+          '[]'::json
+        ) AS payments
+      FROM invoices i
+      JOIN sale_type st ON st.id = i.sale_type_id
+      LEFT JOIN customers cu ON cu.id = i.customer_id
+      LEFT JOIN currency  cur ON cur.id = i.currency_id
+      LEFT JOIN location  loc ON loc.id = i.location_id
+      WHERE LOWER(COALESCE(st.code, '')) = 'htb'
+        AND i.created_at::date = $1::date
+      ORDER BY i.id ASC
+    `;
+    const { rows } = await pool.query(sql, [dateParam]);
+
+    const invoices = rows.map((row) => {
+      const adOrgId = toIdempiereId(row.location_d365_id) || adOrgIdFallback;
+      const bpartnerId =
+        toIdempiereId(row.customer_htb_id) ||
+        (row.customer_id != null
+          ? toIdempiereId(`customer:${row.customer_id}`)
+          : null) ||
+        bpartnerFallback;
+      const invoiceGuid = toIdempiereId(row.invoice_number || `invoice:${row.id}`);
+
+      const lines = Array.isArray(row.items)
+        ? row.items.map((line) => ({
+            qtyinvoiced: formatQtyString(line.quantity),
+            m_product_id: toIdempiereId(line.product_code),
+            line_gross_amount: formatMoneyString(line.total),
+            product_name: line.product_name ?? null,
+          }))
+        : [];
+
+      const payments = Array.isArray(row.payments)
+        ? row.payments.map((p) => ({
+            amount: formatMoneyString(p.amount),
+            payment_method:
+              String(p.payment_method_code || "").trim().toUpperCase() === "LOAN"
+                ? "HTB DOLLARS"
+                : (p.payment_method_name && String(p.payment_method_name).trim()) ||
+                  (p.payment_method_code && String(p.payment_method_code).trim()) ||
+                  null,
+          }))
+        : [];
+
+      return {
+        invoice: {
+          poreference: row.reference_number ?? null,
+          grandtotal: formatMoneyString(row.total),
+          c_invoice_id: invoiceGuid,
+          dateinvoiced: row.dateinvoiced,
+          documentno: row.invoice_number,
+          ad_client_id: adClientId,
+          ad_org_id: adOrgId,
+          c_bpartner_id: bpartnerId,
+          currency: row.currency_code ?? null,
+        },
+        lines,
+        payments,
+      };
+    });
+
+    res.json({ invoices });
   } catch (err) {
     sendPgError(res, err);
   }
