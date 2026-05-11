@@ -3,7 +3,11 @@ import { AdminLayout } from "./layout/AdminLayout";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { CurrenciesPage } from "./pages/CurrenciesPage";
 import { CustomersPage } from "./pages/CustomersPage";
+import { InventoryPage } from "./pages/InventoryPage";
 import { InvoicesPage } from "./pages/InvoicesPage";
+import { MovementNewPage } from "./pages/MovementNewPage";
+import { MovementPage } from "./pages/MovementPage";
+import { MovementTypesPage } from "./pages/MovementTypesPage";
 import { LocationsPage } from "./pages/LocationsPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { PosPage } from "./pages/PosPage";
@@ -21,6 +25,10 @@ function App() {
           <Route path="currencies" element={<CurrenciesPage />} />
           <Route path="locations" element={<LocationsPage />} />
           <Route path="products" element={<ProductsPage />} />
+          <Route path="movement/new" element={<MovementNewPage />} />
+          <Route path="movement" element={<MovementPage />} />
+          <Route path="inventory" element={<InventoryPage />} />
+          <Route path="movement-types" element={<MovementTypesPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="invoices" element={<InvoicesPage />} />
           <Route path="vat" element={<VatPage />} />

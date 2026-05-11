@@ -147,4 +147,56 @@ export const api = {
         `/api/d365/credit-applications/final-approved?top=${encodeURIComponent(String(top))}`
       ),
   },
+  inventory: {
+    movementTypes: () => apiRequest("/api/inventory/movement-types"),
+    createMovementType: (data) =>
+      apiRequest("/api/inventory/movement-types", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateMovementType: (id, data) =>
+      apiRequest(`/api/inventory/movement-types/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    removeMovementType: (id) =>
+      apiRequest(`/api/inventory/movement-types/${id}`, { method: "DELETE" }),
+    stock: (locationIdOrOptions) => {
+      let locationId = null;
+      let productId = null;
+      if (locationIdOrOptions && typeof locationIdOrOptions === "object") {
+        locationId = locationIdOrOptions.locationId ?? null;
+        productId = locationIdOrOptions.productId ?? null;
+      } else {
+        locationId = locationIdOrOptions;
+      }
+      const params = new URLSearchParams();
+      if (
+        locationId !== null &&
+        locationId !== undefined &&
+        String(locationId).trim() !== ""
+      ) {
+        params.set("location_id", String(locationId));
+      }
+      if (
+        productId !== null &&
+        productId !== undefined &&
+        String(productId).trim() !== ""
+      ) {
+        params.set("product_id", String(productId));
+      }
+      const q = params.toString() ? `?${params.toString()}` : "";
+      return apiRequest(`/api/inventory/stock${q}`);
+    },
+    stockSummary: () => apiRequest("/api/inventory/stock/summary"),
+    movements: (limit = 100) =>
+      apiRequest(
+        `/api/inventory/movements?limit=${encodeURIComponent(String(limit))}`
+      ),
+    postMovement: (data) =>
+      apiRequest("/api/inventory/movements", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
 };
