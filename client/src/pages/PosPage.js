@@ -77,6 +77,14 @@ function money(v) {
   });
 }
 
+/** Match server inventory display: whole numbers as integers, else up to 4 decimals. */
+function formatOnHandQty(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (Number.isInteger(n)) return String(n);
+  return String(Number(n.toFixed(4)));
+}
+
 function normalizedVatPercentage(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -392,6 +400,9 @@ export function PosPage() {
   const [lastReceipt, setLastReceipt] = useState(null);
   const [pickProduct, setPickProduct] = useState(null);
   const [pickStoreId, setPickStoreId] = useState("");
+  /** Per-location on-hand for the product in the "Select store" modal (`ready` = loaded from API). */
+  const [pickProductStockByLoc, setPickProductStockByLoc] = useState(() => new Map());
+  const [pickProductStockStatus, setPickProductStockStatus] = useState("idle");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentAmountsByMethod, setPaymentAmountsByMethod] = useState({});
   const [paymentReference, setPaymentReference] = useState("");
@@ -407,6 +418,10 @@ export function PosPage() {
   const [htbCreditSelection, setHtbCreditSelection] = useState(null);
   /** When false, search + table are hidden so the catalog gets vertical space; user can reopen via the header toggle. */
   const [d365CreditAppsListExpanded, setD365CreditAppsListExpanded] = useState(true);
+  /** On-hand quantity at the POS default branch (product id → qty). */
+  const [saleLocationStockByProductId, setSaleLocationStockByProductId] = useState(
+    () => new Map()
+  );
 
   const filteredD365CreditRecords = useMemo(
     () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
@@ -733,6 +748,65 @@ export function PosPage() {
   const hasActiveDefaultLocation =
     defaultLocationId != null &&
     locations.some((l) => l.is_active !== false && String(l.id) === String(defaultLocationId));
+
+  const refreshSaleLocationStock = useCallback(async () => {
+    if (!hasActiveDefaultLocation || defaultLocationId == null) {
+      setSaleLocationStockByProductId(new Map());
+      return;
+    }
+    try {
+      const rows = await api.inventory.stock({ locationId: defaultLocationId });
+      const next = new Map();
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const pid = toPositiveInt(row.product_id);
+        if (pid == null) continue;
+        const q = Number(row.quantity);
+        next.set(pid, Number.isFinite(q) ? q : 0);
+      }
+      setSaleLocationStockByProductId(next);
+    } catch {
+      setSaleLocationStockByProductId(new Map());
+    }
+  }, [defaultLocationId, hasActiveDefaultLocation]);
+
+  useEffect(() => {
+    void refreshSaleLocationStock();
+  }, [refreshSaleLocationStock]);
+
+  useEffect(() => {
+    if (!pickProduct?.id) {
+      setPickProductStockByLoc(new Map());
+      setPickProductStockStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setPickProductStockStatus("loading");
+    setPickProductStockByLoc(new Map());
+    (async () => {
+      try {
+        const rows = await api.inventory.stock({ productId: pickProduct.id });
+        const next = new Map();
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const lid = toPositiveInt(row.location_id);
+          if (lid == null) continue;
+          const q = Number(row.quantity);
+          next.set(lid, Number.isFinite(q) ? q : 0);
+        }
+        if (!cancelled) {
+          setPickProductStockByLoc(next);
+          setPickProductStockStatus("ready");
+        }
+      } catch {
+        if (!cancelled) {
+          setPickProductStockByLoc(new Map());
+          setPickProductStockStatus("error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pickProduct]);
 
   const missingCheckoutItems = useMemo(() => {
     const missing = [];
@@ -1104,6 +1178,7 @@ export function PosPage() {
       setD365CreditSearch("");
       setD365CreditAppsListExpanded(true);
       setCustomerId(saleType === "cash" ? resolveDefaultCustomerId(customers) : "");
+      void refreshSaleLocationStock();
     } catch (e) {
       const msg = e.message || "Checkout failed";
       if (fromPaymentModal) setPaymentError(msg);
@@ -1549,6 +1624,22 @@ export function PosPage() {
                         onClick={() => beginAddProduct(p)}
                       >
                         <span className="pos-product-name">{p.name}</span>
+                        {hasActiveDefaultLocation ? (
+                          <span
+                            className={`pos-product-stock${
+                              (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
+                                ? " pos-product-stock--none"
+                                : ""
+                            }`}
+                            title={
+                              headerBranchName
+                                ? `Available quantity at ${headerBranchName}`
+                                : "Available quantity at this location"
+                            }
+                          >
+                            Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
+                          </span>
+                        ) : null}
                         <span className="pos-product-meta">
                           <code>{p.code}</code>
                           <span className="pos-product-price">{money(p.unit_price)}</span>
@@ -1570,6 +1661,22 @@ export function PosPage() {
                   onClick={() => beginAddProduct(p)}
                 >
                   <span className="pos-product-name">{p.name}</span>
+                  {hasActiveDefaultLocation ? (
+                    <span
+                      className={`pos-product-stock${
+                        (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
+                          ? " pos-product-stock--none"
+                          : ""
+                      }`}
+                      title={
+                        headerBranchName
+                          ? `Available quantity at ${headerBranchName}`
+                          : "Available quantity at this location"
+                      }
+                    >
+                      Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
+                    </span>
+                  ) : null}
                   <span className="pos-product-meta">
                     <code>{p.code}</code>
                     <span className="pos-product-price">{money(p.unit_price)}</span>
@@ -1851,11 +1958,23 @@ export function PosPage() {
                 onChange={(e) => setPickStoreId(e.target.value)}
               >
                 <option value="">— Select —</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={String(l.id)}>
-                    {l.name || l.code || `Location #${l.id}`}
-                  </option>
-                ))}
+                {locations.map((l) => {
+                  const locLabel = l.name || l.code || `Location #${l.id}`;
+                  let qtyBracket;
+                  if (pickProductStockStatus === "loading") {
+                    qtyBracket = "(…)";
+                  } else if (pickProductStockStatus === "error") {
+                    qtyBracket = "(—)";
+                  } else {
+                    const q = pickProductStockByLoc.get(Number(l.id)) ?? 0;
+                    qtyBracket = `(${formatOnHandQty(q)})`;
+                  }
+                  return (
+                    <option key={l.id} value={String(l.id)}>
+                      {locLabel} {qtyBracket}
+                    </option>
+                  );
+                })}
               </select>
             </label>
           </div>

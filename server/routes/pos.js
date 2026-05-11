@@ -60,6 +60,38 @@ function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+/**
+ * Movement type used for POS checkout inventory decreases.
+ * Created on first use if the DB has no `sale` type yet.
+ */
+async function ensureSaleMovementTypeId(client) {
+  const { rows } = await client.query(
+    `SELECT id FROM movement_type
+     WHERE LOWER(TRIM(COALESCE(code, ''))) = 'sale'
+     ORDER BY id ASC
+     LIMIT 1`
+  );
+  if (rows.length) return Number(rows[0].id);
+  try {
+    const ins = await client.query(
+      `INSERT INTO movement_type (code, name, description, is_positive)
+       VALUES ('sale', 'Sale', 'Point-of-sale (decreases on-hand at stocked location)', false)
+       RETURNING id`
+    );
+    return Number(ins.rows[0].id);
+  } catch (err) {
+    if (err && err.code === "23505") {
+      const again = await client.query(
+        `SELECT id FROM movement_type
+         WHERE LOWER(TRIM(COALESCE(code, ''))) = 'sale'
+         LIMIT 1`
+      );
+      if (again.rows.length) return Number(again.rows[0].id);
+    }
+    throw err;
+  }
+}
+
 function moneyToCents(n) {
   return Math.round(Number(n) * 100);
 }
@@ -765,7 +797,7 @@ router.post("/checkout", async (req, res) => {
       }
 
       const { rows } = await client.query(
-        `SELECT p.id, p.unit_price, p.is_active, v.percentage AS vat_percentage
+        `SELECT p.id, p.unit_price, p.unit_cost, p.is_active, v.percentage AS vat_percentage
          FROM product p
          LEFT JOIN vat v ON v.id = p.vat_id
          WHERE p.id = $1`,
@@ -788,10 +820,14 @@ router.post("/checkout", async (req, res) => {
       const vatPercentage = normalizeVatPercentage(p.vat_percentage);
       const lineVatAmount = roundMoney(vatIncludedAmount(lineTotal, vatPercentage));
       const lineSubTotal = roundMoney(lineTotal - lineVatAmount);
+      const unitCostRaw = p.unit_cost != null ? Number(p.unit_cost) : null;
+      const unitCost =
+        unitCostRaw !== null && Number.isFinite(unitCostRaw) ? roundMoney(unitCostRaw) : null;
       pricedLines.push({
         productId,
         qty,
         unitPrice,
+        unitCost,
         vatPercentage,
         lineSubTotal,
         lineVatAmount,
@@ -1021,6 +1057,9 @@ router.post("/checkout", async (req, res) => {
         : distinctPaymentReferences.length === 1
           ? distinctPaymentReferences[0]
           : null;
+
+    const saleMovementTypeId = await ensureSaleMovementTypeId(client);
+
     for (const [locId, groupLines] of byLocation) {
       const invoiceSubTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineSubTotal, 0));
       const invoiceVatAmount = roundMoney(groupLines.reduce((s, L) => s + L.lineVatAmount, 0));
@@ -1068,7 +1107,42 @@ router.post("/checkout", async (req, res) => {
            RETURNING id, product_id, quantity, unit_price, subtotal, vat, total`,
           [invoice.id, L.productId, L.qty, L.unitPrice, L.lineSubTotal, L.lineVatAmount, L.lineTotal]
         );
-        savedItems.push(itemRows[0]);
+        const savedItem = itemRows[0];
+        savedItems.push(savedItem);
+
+        const { rows: stockedRows } = await client.query(
+          `SELECT id FROM inventory
+           WHERE product_id = $1 AND location_id = $2
+           FOR UPDATE`,
+          [L.productId, locId]
+        );
+        if (stockedRows.length > 0) {
+          const invId = Number(stockedRows[0].id);
+          const saleQty = -Math.abs(Number(L.qty));
+          await client.query(
+            `INSERT INTO inventory_movement (
+               product_id, location_id, quantity, unit_cost, movement_type_id,
+               reference_type, reference_id, notes, created_by
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+              L.productId,
+              locId,
+              saleQty,
+              L.unitCost,
+              saleMovementTypeId,
+              "invoice_item",
+              Number(savedItem.id),
+              null,
+              null,
+            ]
+          );
+          await client.query(
+            `UPDATE inventory
+             SET quantity = quantity + $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2`,
+            [saleQty, invId]
+          );
+        }
       }
       if (paymentPool.length > 0) {
         const invoicePayments = [];

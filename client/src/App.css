@@ -1341,6 +1341,17 @@ code {
   font-weight: 600;
 }
 
+.pos-product-stock {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.pos-product-stock--none {
+  color: var(--danger, #c0392b);
+}
+
 .pos-cart {
   position: sticky;
   top: 1rem;
@@ -1692,6 +1703,10 @@ code {
 .pos-page .pos-product-price {
   color: var(--pos-hot);
   font-size: 1rem;
+}
+
+.pos-page .pos-product-stock {
+  font-size: 0.82rem;
 }
 
 .pos-page .pos-cart {
