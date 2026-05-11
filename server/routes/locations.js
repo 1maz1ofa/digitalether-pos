@@ -7,7 +7,7 @@ const router = express.Router();
 router.get("/", async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, code, name, address, is_active, created_at
+      `SELECT id, code, name, d365_id, address, is_active, created_at
        FROM location
        ORDER BY name NULLS LAST, code`
     );
@@ -24,7 +24,7 @@ router.get("/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid id" });
     }
     const { rows } = await pool.query(
-      `SELECT id, code, name, address, is_active, created_at
+      `SELECT id, code, name, d365_id, address, is_active, created_at
        FROM location WHERE id = $1`,
       [id]
     );
@@ -38,12 +38,23 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const code = req.body?.code;
-    const name = req.body?.name;
     if (!code || String(code).trim() === "") {
       return res.status(400).json({ error: "Code is required" });
     }
+    const codeValue = String(code).trim().toUpperCase();
+    if (!/^[A-Z0-9]{3}$/.test(codeValue)) {
+      return res
+        .status(400)
+        .json({ error: "Code must be exactly 3 characters (letters/numbers only)" });
+    }
+
+    const name = req.body?.name;
     if (!name || String(name).trim() === "") {
       return res.status(400).json({ error: "Name is required" });
+    }
+    const d365Id = req.body?.d365_id;
+    if (!d365Id || String(d365Id).trim() === "") {
+      return res.status(400).json({ error: "d365_id is required" });
     }
     const address =
       req.body?.address === undefined || req.body?.address === null
@@ -53,10 +64,10 @@ router.post("/", async (req, res) => {
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
 
     const { rows } = await pool.query(
-      `INSERT INTO location (code, name, address, is_active)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, code, name, address, is_active, created_at`,
-      [String(code).trim(), String(name).trim(), address, isActive]
+      `INSERT INTO location (code, name, d365_id, address, is_active)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, code, name, d365_id, address, is_active, created_at`,
+      [codeValue, String(name).trim(), String(d365Id).trim(), address, isActive]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -72,11 +83,12 @@ router.put("/:id", async (req, res) => {
     }
     const code = req.body?.code;
     const name = req.body?.name;
-    if (!code || String(code).trim() === "") {
-      return res.status(400).json({ error: "Code is required" });
-    }
     if (!name || String(name).trim() === "") {
       return res.status(400).json({ error: "Name is required" });
+    }
+    const d365Id = req.body?.d365_id;
+    if (!d365Id || String(d365Id).trim() === "") {
+      return res.status(400).json({ error: "d365_id is required" });
     }
     const address =
       req.body?.address === undefined || req.body?.address === null
@@ -85,12 +97,29 @@ router.put("/:id", async (req, res) => {
     const isActive =
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
 
+    const codeValue =
+      code === undefined || code === null || String(code).trim() === ""
+        ? null
+        : String(code).trim();
+    if (codeValue !== null && !/^[A-Z0-9]{3}$/.test(codeValue.toUpperCase())) {
+      return res
+        .status(400)
+        .json({ error: "Code must be exactly 3 characters (letters/numbers only)" });
+    }
+
     const { rows } = await pool.query(
       `UPDATE location
-       SET code = $1, name = $2, address = $3, is_active = $4
-       WHERE id = $5
-       RETURNING id, code, name, address, is_active, created_at`,
-      [String(code).trim(), String(name).trim(), address, isActive, id]
+       SET code = COALESCE($1, code), name = $2, d365_id = $3, address = $4, is_active = $5
+       WHERE id = $6
+       RETURNING id, code, name, d365_id, address, is_active, created_at`,
+      [
+        codeValue === null ? null : codeValue.toUpperCase(),
+        String(name).trim(),
+        String(d365Id).trim(),
+        address,
+        isActive,
+        id,
+      ]
     );
     if (!rows.length) return res.status(404).json({ error: "Location not found" });
     res.json(rows[0]);

@@ -9,6 +9,8 @@ const posRouter = require("./routes/pos");
 const d365Router = require("./routes/d365");
 const currenciesRouter = require("./routes/currencies");
 const vatRouter = require("./routes/vat");
+const terminalsRouter = require("./routes/terminals");
+const invoicesRouter = require("./routes/invoices");
 
 const app = express();
 
@@ -27,6 +29,8 @@ app.use("/api/pos", posRouter);
 app.use("/api/d365", d365Router);
 app.use("/api/currencies", currenciesRouter);
 app.use("/api/vat", vatRouter);
+app.use("/api/terminals", terminalsRouter);
+app.use("/api/invoices", invoicesRouter);
 
 // ✅ Database test route
 app.get("/test-db", async (req, res) => {

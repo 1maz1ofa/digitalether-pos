@@ -6,9 +6,16 @@ const {
   d365Configured,
   d365ConfigError,
   getFinalApprovedCreditApplicationById,
+  postLoanTransaction,
 } = require("../services/d365Client");
 
 const router = express.Router();
+
+/**
+ * After a successful HTB checkout (local DB committed), call Dataverse `htb365_PostLoanTransaction`
+ * once per saved invoice. Set to `false` to disable that integration without changing checkout behavior.
+ */
+const RUN_HTB_D365_LOAN_AFTER_CHECKOUT = true;
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const HEX32_RE = /^[0-9a-fA-F]{32}$/;
@@ -74,6 +81,16 @@ function safeText(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
   return text === "" ? null : text;
+}
+
+function formatInvoiceLocalDate(value) {
+  if (value === undefined || value === null) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function readHtbMaxDepositPercent() {
@@ -149,19 +166,120 @@ function branchGuidFromEnv() {
   return guid;
 }
 
+function normalizeGuidLike(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (text === "") return null;
+  const hexOnly = text
+    .toLowerCase()
+    .replace(/[{}]/g, "")
+    .replace(/-/g, "");
+  if (!/^[0-9a-f]{32}$/.test(hexOnly)) return null;
+  return hexOnly;
+}
+
+function readTerminalLabelFromEnv() {
+  const preferredName =
+    process.env.TERMINAL_NAME ??
+    process.env.terminal_name ??
+    process.env.REACT_APP_TERMINAL_NAME ??
+    process.env.REACT_APP_terminal_name;
+  if (preferredName != null && String(preferredName).trim() !== "") {
+    return String(preferredName).trim();
+  }
+  const fallbackCode =
+    process.env.TERMINAL_CODE ??
+    process.env.terminal_code ??
+    process.env.REACT_APP_TERMINAL_CODE ??
+    process.env.REACT_APP_terminal_code;
+  if (fallbackCode != null && String(fallbackCode).trim() !== "") {
+    return String(fallbackCode).trim();
+  }
+  return null;
+}
+
+function normalizeTerminalMatchValue(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text === "" ? null : text;
+}
+
+function parseTerminalCounter(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  try {
+    const n = BigInt(String(raw).trim());
+    return n >= 0n ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function documentNumberFromTerminal(terminalCode, nextNumber, startingNumber) {
+  const safeCode = String(terminalCode || "").trim().toUpperCase();
+  const next = parseTerminalCounter(nextNumber);
+  const start = parseTerminalCounter(startingNumber);
+  if (!safeCode || next === null) return null;
+  const width = Math.max(
+    String(next).length,
+    start !== null ? String(start).length : 0,
+    1
+  );
+  return `${safeCode}-${String(next).padStart(width, "0")}`;
+}
+
+async function resolveActiveTerminalForPos(client, locationIdHint = null) {
+  const terminalCodeFromEnv = normalizeTerminalMatchValue(
+    process.env.TERMINAL_CODE ??
+      process.env.terminal_code ??
+      process.env.REACT_APP_TERMINAL_CODE ??
+      process.env.REACT_APP_terminal_code
+  );
+  const terminalNameFromEnv = normalizeTerminalMatchValue(
+    process.env.TERMINAL_NAME ??
+      process.env.terminal_name ??
+      process.env.REACT_APP_TERMINAL_NAME ??
+      process.env.REACT_APP_terminal_name
+  );
+  const locationId = Number.isInteger(locationIdHint) && locationIdHint > 0 ? locationIdHint : null;
+  const filters = ["COALESCE(t.is_active, true) = true"];
+  const values = [];
+  let idx = 1;
+  if (locationId !== null) {
+    filters.push(`t.location_id = $${idx++}`);
+    values.push(locationId);
+  }
+  if (terminalCodeFromEnv) {
+    filters.push(`UPPER(TRIM(COALESCE(t.code, ''))) = UPPER($${idx++})`);
+    values.push(terminalCodeFromEnv);
+  } else if (terminalNameFromEnv) {
+    filters.push(`UPPER(TRIM(COALESCE(t.name, ''))) = UPPER($${idx++})`);
+    values.push(terminalNameFromEnv);
+  }
+  const { rows } = await client.query(
+    `SELECT t.id, t.code, t.name, t.starting_number, t.next_number
+     FROM terminal t
+     WHERE ${filters.join(" AND ")}
+     ORDER BY t.id ASC
+     LIMIT 1`,
+    values
+  );
+  return rows[0] || null;
+}
+
 async function defaultLocationFromEnv(client, { requireActive = false } = {}) {
-  const guid = branchGuidFromEnv();
-  if (!guid) return null;
+  const rawGuid = branchGuidFromEnv();
+  const guidHex = normalizeGuidLike(rawGuid);
+  if (!guidHex) return null;
   const where = requireActive
-    ? "d365_id::text = $1 AND COALESCE(is_active, true) = true"
-    : "d365_id::text = $1";
+    ? "LOWER(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', '')) = $1 AND COALESCE(is_active, true) = true"
+    : "LOWER(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', '')) = $1";
   const { rows } = await client.query(
     `SELECT id, name, code
      FROM location
      WHERE ${where}
      ORDER BY id ASC
      LIMIT 1`,
-    [guid]
+    [guidHex]
   );
   if (!rows.length) return null;
   const row = rows[0];
@@ -171,6 +289,66 @@ async function defaultLocationFromEnv(client, { requireActive = false } = {}) {
     code: row.code ? String(row.code).trim() : null,
   };
 }
+
+router.get("/debug/default-location", async (req, res) => {
+  try {
+    const rawGuid =
+      process.env.D365_BRANCH_ID ??
+      process.env.d365_branch_id ??
+      process.env.BRANCH_ID ??
+      process.env.branch_id ??
+      null;
+    const normalizedGuid = normalizeGuidLike(rawGuid);
+    const locations = normalizedGuid
+      ? (
+          await pool.query(
+            `SELECT id, code, name, d365_id::text AS d365_id, COALESCE(is_active, true) AS is_active
+             FROM location
+             WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', ''), '}', '')) = $1
+             ORDER BY id ASC`,
+            [normalizedGuid]
+          )
+        ).rows
+      : [];
+    const activeLocation =
+      locations.find((row) => row.is_active === true) || null;
+    const resolved = await defaultLocationFromEnv(pool, { requireActive: true });
+    const terminal = await resolveActiveTerminalForPos(
+      pool,
+      resolved?.id ?? null
+    );
+
+    return res.json({
+      branchEnv: {
+        raw: rawGuid,
+        normalized: normalizedGuid,
+        hasValidGuidFormat: normalizedGuid != null,
+      },
+      matches: {
+        locationsByBranchGuid: locations,
+        activeLocationFromMatches: activeLocation,
+        resolvedDefaultLocation: resolved,
+        resolvedTerminal: terminal
+          ? {
+              id: terminal.id,
+              code: terminal.code ?? null,
+              name: terminal.name ?? null,
+              starting_number: terminal.starting_number ?? null,
+              next_number: terminal.next_number ?? null,
+            }
+          : null,
+      },
+      tips: [
+        "branchEnv.normalized must not be null.",
+        "matches.locationsByBranchGuid should contain at least one row.",
+        "At least one matched location must have is_active=true.",
+        "matches.resolvedTerminal should be non-null for checkout.",
+      ],
+    });
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
 
 function buildLocalHtbCustomerName(record) {
   const first = record?.customerFirstName ? String(record.customerFirstName).trim() : "";
@@ -196,7 +374,9 @@ function isDuplicateHtbCreditApplicationError(err) {
 router.get("/settings", async (req, res) => {
   try {
     const fromEnv = await defaultLocationFromEnv(pool);
+    const terminal = await resolveActiveTerminalForPos(pool, fromEnv?.id ?? null);
     const htbMaxDepositPercent = readHtbMaxDepositPercent();
+    const terminalLabel = readTerminalLabelFromEnv();
     if (htbMaxDepositPercent === null) {
       return res.status(500).json({
         error: "HTB_MAX_DEPOSIT_PERCENT must be a number greater than 0 and less than 100.",
@@ -205,6 +385,11 @@ router.get("/settings", async (req, res) => {
     res.json({
       defaultLocationId: fromEnv?.id ?? null,
       branchName: fromEnv?.name || fromEnv?.code || null,
+      terminalName: terminal?.name || terminal?.code || terminalLabel,
+      terminalId: terminal?.id ?? null,
+      nextDocumentNumber: terminal
+        ? documentNumberFromTerminal(terminal.code, terminal.next_number, terminal.starting_number)
+        : null,
       htbMaxDepositPercent,
     });
   } catch (err) {
@@ -229,11 +414,61 @@ router.get("/payment-methods", async (req, res) => {
 router.get("/sale-types", async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT code, name, position
+      `SELECT id, code, name, position
        FROM sale_type
        ORDER BY COALESCE(position, 2147483647) ASC, code ASC`
     );
     res.json(rows);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
+router.get("/invoices", async (req, res) => {
+  try {
+    let dateParam = safeText(req.query?.date);
+    if (dateParam && !ISO_DATE_RE.test(dateParam)) {
+      return res.status(400).json({ error: "date must be in YYYY-MM-DD format" });
+    }
+    if (!dateParam) {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      dateParam = `${yyyy}-${mm}-${dd}`;
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         i.id,
+         i.invoice_number,
+         i.reference_number,
+         i.created_at,
+         i.status,
+         i.total,
+         i.subtotal,
+         i.vat,
+         i.creditapplication_id,
+         cu.name AS customer_name,
+         loc.name AS location_name,
+         loc.code AS location_code,
+         cur.code AS currency_code,
+         st.code AS sale_type_code,
+         st.name AS sale_type_name
+       FROM invoices i
+       LEFT JOIN customers cu ON cu.id = i.customer_id
+       LEFT JOIN location loc ON loc.id = i.location_id
+       LEFT JOIN currency cur ON cur.id = i.currency_id
+       LEFT JOIN sale_type st ON st.id = i.sale_type_id
+       WHERE i.created_at::date = $1::date
+       ORDER BY i.created_at DESC, i.id DESC`,
+      [dateParam]
+    );
+
+    res.json({
+      date: dateParam,
+      invoices: rows,
+    });
   } catch (err) {
     sendPgError(res, err);
   }
@@ -480,12 +715,14 @@ router.post("/checkout", async (req, res) => {
       }
     }
     const currencyChk = await client.query(
-      "SELECT 1 FROM currency WHERE id = $1 AND COALESCE(is_active, true) = true",
+      "SELECT code FROM currency WHERE id = $1 AND COALESCE(is_active, true) = true",
       [parsedCurrencyId]
     );
     if (!currencyChk.rowCount) {
       return res.status(400).json({ error: "Selected currency is invalid or inactive" });
     }
+    const currencyCode =
+      currencyChk.rows[0].code != null ? String(currencyChk.rows[0].code).trim() : "";
     if (saleType) {
       const saleTypeRow = await client.query(
         `SELECT id
@@ -665,6 +902,40 @@ router.post("/checkout", async (req, res) => {
       }
     }
 
+    const terminal = await resolveActiveTerminalForPos(client, resolvedDefaultLocationId);
+    if (!terminal) {
+      return res.status(400).json({
+        error: "No active terminal found for POS. Configure an active terminal first.",
+      });
+    }
+    const terminalLockedRows = await client.query(
+      `SELECT id, code, name, starting_number, next_number
+       FROM terminal
+       WHERE id = $1
+       FOR UPDATE`,
+      [terminal.id]
+    );
+    if (!terminalLockedRows.rowCount) {
+      return res.status(400).json({ error: "Configured terminal was not found." });
+    }
+    const terminalLocked = terminalLockedRows.rows[0];
+    const terminalNextNumber = parseTerminalCounter(terminalLocked.next_number);
+    if (terminalNextNumber === null) {
+      return res.status(400).json({
+        error: "Configured terminal has an invalid next document number.",
+      });
+    }
+    const baseDocumentNumber = documentNumberFromTerminal(
+      terminalLocked.code,
+      terminalLocked.next_number,
+      terminalLocked.starting_number
+    );
+    if (!baseDocumentNumber) {
+      return res.status(400).json({
+        error: "Configured terminal is missing a code required for document numbering.",
+      });
+    }
+
     const invoices = [];
     let invIndex = 0;
     const grandSubTotal = roundMoney(pricedLines.reduce((s, L) => s + L.lineSubTotal, 0));
@@ -725,6 +996,18 @@ router.post("/checkout", async (req, res) => {
       ...p,
       amountCents: moneyToCents(p.amount),
     }));
+    const runHtbLoanAfterCheckout =
+      RUN_HTB_D365_LOAN_AFTER_CHECKOUT && saleType === "htb" && d365Configured();
+    const htbD365LoanBodies = runHtbLoanAfterCheckout ? [] : null;
+    let paymentMethodRowById = null;
+    if (runHtbLoanAfterCheckout && paymentPool.length > 0) {
+      const pmIds = [...new Set(paymentPool.map((p) => p.payment_method_id))];
+      const pmRes = await client.query(
+        `SELECT id, code, name FROM payment_methods WHERE id = ANY($1::int[])`,
+        [pmIds]
+      );
+      paymentMethodRowById = new Map(pmRes.rows.map((r) => [Number(r.id), r]));
+    }
     const distinctPaymentReferences = Array.from(
       new Set(
         paymentPool
@@ -743,7 +1026,8 @@ router.post("/checkout", async (req, res) => {
       const invoiceVatAmount = roundMoney(groupLines.reduce((s, L) => s + L.lineVatAmount, 0));
       const invoiceTotal = roundMoney(invoiceSubTotal + invoiceVatAmount);
       const invoiceTotalCents = moneyToCents(invoiceTotal);
-      const invoiceNumber = `POS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${invIndex++}`;
+      const invoiceNumber =
+        byLocation.size === 1 ? baseDocumentNumber : `${baseDocumentNumber}-${invIndex++}`;
 
       const { rows: invRows } = await client.query(
         `INSERT INTO invoices (
@@ -760,7 +1044,7 @@ router.post("/checkout", async (req, res) => {
            reference_number
          )
          VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, $9::uuid, $10)
-         RETURNING id, invoice_number, customer_id, location_id, subtotal, vat, total, status, currency_id, sale_type_id, creditapplication_id, created_at`,
+         RETURNING id, invoice_number, customer_id, location_id, subtotal, vat, total, status, currency_id, sale_type_id, creditapplication_id, reference_number, created_at`,
         [
           invoiceNumber,
           customerId,
@@ -841,12 +1125,76 @@ router.post("/checkout", async (req, res) => {
             [invoice.id, p.payment_method_id, p.amount]
           );
         }
+        if (
+          htbD365LoanBodies !== null &&
+          invoicePayments.length > 0 &&
+          paymentMethodRowById instanceof Map
+        ) {
+          const paymentsForD365 = invoicePayments.map((p) => {
+            const row = paymentMethodRowById.get(p.payment_method_id);
+            const code = String(row?.code || "").trim().toUpperCase();
+            const payment_method =
+              code === "LOAN"
+                ? "HTB DOLLARS"
+                : (row?.name != null ? String(row.name).trim() : "") ||
+                  (row?.code != null ? String(row.code).trim() : "") ||
+                  "UNKNOWN";
+            return {
+              amount: formatMoneyString(p.amount) ?? String(p.amount),
+              payment_method,
+            };
+          });
+          htbD365LoanBodies.push({
+            poreference:
+              invoice.reference_number != null ? String(invoice.reference_number).trim() : "",
+            grandtotal: formatMoneyString(invoice.total) ?? String(invoice.total),
+            documentno: String(invoice.invoice_number),
+            dateinvoiced: formatInvoiceLocalDate(invoice.created_at),
+            currency: currencyCode,
+            payments: paymentsForD365,
+          });
+        }
       }
       invoices.push({ invoice, items: savedItems });
     }
 
+    await client.query(
+      `UPDATE terminal
+       SET next_number = $1
+       WHERE id = $2`,
+      [(terminalNextNumber + 1n).toString(), terminalLocked.id]
+    );
+
     await client.query("COMMIT");
-    res.status(201).json({ invoices });
+
+    let htbD365Loan = null;
+    if (runHtbLoanAfterCheckout && htbD365LoanBodies && htbD365LoanBodies.length > 0) {
+      const attempts = [];
+      for (const loanBody of htbD365LoanBodies) {
+        try {
+          const data = await postLoanTransaction(loanBody);
+          attempts.push({ documentno: loanBody.documentno, ok: true, data: data ?? null });
+        } catch (loanErr) {
+          console.error("[pos/checkout] HTB postLoanTransaction failed:", loanErr.message);
+          attempts.push({
+            documentno: loanBody.documentno,
+            ok: false,
+            error: loanErr.message || String(loanErr),
+          });
+        }
+      }
+      htbD365Loan = { attempts, allOk: attempts.every((a) => a.ok) };
+    }
+
+    res.status(201).json({
+      invoices,
+      nextDocumentNumber: documentNumberFromTerminal(
+        terminalLocked.code,
+        (terminalNextNumber + 1n).toString(),
+        terminalLocked.starting_number
+      ),
+      ...(htbD365Loan ? { htbD365Loan } : {}),
+    });
   } catch (err) {
     try {
       await client.query("ROLLBACK");

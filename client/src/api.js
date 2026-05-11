@@ -16,7 +16,11 @@ export async function apiRequest(path, options = {}) {
   const res = await fetch(url, { ...options, headers });
   const body = res.status === 204 ? null : await parseJsonSafe(res);
   if (!res.ok) {
-    const err = new Error(body?.error || res.statusText || "Request failed");
+    const message =
+      body?.error && body?.detail
+        ? `${body.error} (${body.detail})`
+        : body?.error || res.statusText || "Request failed";
+    const err = new Error(message);
     err.status = res.status;
     err.body = body;
     throw err;
@@ -51,6 +55,19 @@ export const api = {
     remove: (id) =>
       apiRequest(`/api/locations/${id}`, { method: "DELETE" }),
   },
+  terminals: {
+    list: () => apiRequest("/api/terminals"),
+    get: (id) => apiRequest(`/api/terminals/${id}`),
+    create: (data) =>
+      apiRequest("/api/terminals", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/terminals/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/terminals/${id}`, { method: "DELETE" }),
+  },
   products: {
     list: () => apiRequest("/api/products"),
     get: (id) => apiRequest(`/api/products/${id}`),
@@ -76,6 +93,18 @@ export const api = {
       }),
     remove: (id) =>
       apiRequest(`/api/customers/${id}`, { method: "DELETE" }),
+  },
+  invoices: {
+    list: (fromDate, toDate, saleTypeId) => {
+      const params = new URLSearchParams();
+      if (fromDate) params.set("from", String(fromDate));
+      if (toDate) params.set("to", String(toDate));
+      if (saleTypeId !== null && saleTypeId !== undefined && String(saleTypeId).trim() !== "") {
+        params.set("saleTypeId", String(saleTypeId));
+      }
+      const q = params.toString() ? `?${params.toString()}` : "";
+      return apiRequest(`/api/invoices${q}`);
+    },
   },
   currencies: {
     list: () => apiRequest("/api/currencies"),

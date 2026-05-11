@@ -3,6 +3,9 @@ const {
   d365Configured,
   d365ConfigError,
   listFinalApprovedCreditApplications,
+  postLoanTransaction,
+  validatePostLoanTransactionParams,
+  buildPostLoanTransactionBody,
 } = require("../services/d365Client");
 
 const router = express.Router();
@@ -41,6 +44,42 @@ router.get("/credit-applications/final-approved", async (req, res) => {
     const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
     console.error("[d365] credit-applications:", err.message);
     res.status(status).json({ error: err.message || "Dataverse request failed" });
+  }
+});
+
+/**
+ * POST /api/d365/post-loan-transaction
+ * Body: poreference, grandtotal, documentno, dateinvoiced, currency, payments[{ amount, payment_method }]
+ * Forwards to Dataverse unbound action with { transactionJson: "<stringified invoice+payments>" }.
+ * Optional query: ?dryRun=1 — validate only and return the payload without calling Dataverse.
+ */
+router.post("/post-loan-transaction", async (req, res) => {
+  if (!d365Configured()) {
+    return res.status(503).json({ error: d365ConfigError() });
+  }
+  const validationErrors = validatePostLoanTransactionParams(req.body);
+  if (validationErrors.length) {
+    return res.status(400).json({ error: "Invalid body", details: validationErrors });
+  }
+  const transactionPayload = buildPostLoanTransactionBody(req.body);
+  if (req.query.dryRun === "1" || req.query.dryRun === "true") {
+    return res.json({
+      dryRun: true,
+      transactionPayload,
+    });
+  }
+  try {
+    const data = await postLoanTransaction(req.body);
+    res.status(200).json({ ok: true, data: data ?? null, transactionPayload });
+  } catch (err) {
+    const status =
+      err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
+    console.error("[d365] post-loan-transaction:", err.message);
+    res.status(status).json({
+      error: err.message || "Dataverse request failed",
+      details: err.details,
+      transactionPayload,
+    });
   }
 });
 

@@ -378,6 +378,7 @@ export function PosPage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [posSettings, setPosSettings] = useState(null);
+  const [nextDocumentNumber, setNextDocumentNumber] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [currencyId, setCurrencyId] = useState("");
@@ -434,6 +435,11 @@ export function PosPage() {
         return resolveDefaultCustomerId(activeCustomers);
       });
       setPosSettings(settings);
+      setNextDocumentNumber(
+        settings?.nextDocumentNumber != null && String(settings.nextDocumentNumber).trim() !== ""
+          ? String(settings.nextDocumentNumber).trim()
+          : null
+      );
       setPaymentMethods(Array.isArray(methods) ? methods : []);
       const activeCurrencies = Array.isArray(currencyRows)
         ? currencyRows.filter((c) => c && c.is_active !== false)
@@ -585,6 +591,13 @@ export function PosPage() {
     return fromD365;
   }, [posSettings, locationNameById, d365Meta]);
 
+  const headerTerminalName = useMemo(() => {
+    if (posSettings?.terminalName != null && String(posSettings.terminalName).trim() !== "") {
+      return String(posSettings.terminalName).trim();
+    }
+    return null;
+  }, [posSettings]);
+
   function applyMultiStore(nextMulti) {
     try {
       window.localStorage.setItem(MULTI_STORE_STORAGE_KEY, nextMulti ? "1" : "0");
@@ -712,6 +725,10 @@ export function PosPage() {
   const hasSelectedCustomer =
     saleType === "htb" ||
     (customerId !== "" && customers.some((c) => String(c.id) === String(customerId)));
+  const defaultLocationId = toPositiveInt(posSettings?.defaultLocationId);
+  const hasActiveDefaultLocation =
+    defaultLocationId != null &&
+    locations.some((l) => l.is_active !== false && String(l.id) === String(defaultLocationId));
 
   const missingCheckoutItems = useMemo(() => {
     const missing = [];
@@ -720,16 +737,68 @@ export function PosPage() {
     if (checkoutLoading) missing.push("Checkout is already in progress.");
     if (
       !multiStore &&
-      (posSettings == null ||
-        toPositiveInt(posSettings.defaultLocationId) == null)
+      !hasActiveDefaultLocation
     ) {
-      missing.push("Configure the default branch on the server (D365_BRANCH_ID GUID mapped to location.d365_id).");
+      missing.push(
+        "Configure an active default branch on the server (D365_BRANCH_ID GUID mapped to an active location.d365_id)."
+      );
     }
     if (htbNeedsCustomerSelection) missing.push("Select an HTB customer (credit application).");
     if (!hasSelectedCurrency) missing.push("Select a currency for this sale.");
     if (!hasSelectedCustomer) missing.push("Select a customer for this sale.");
     return missing;
-  }, [cartLines.length, checkoutLoading, hasSelectedCurrency, hasSelectedCustomer, htbNeedsCustomerSelection, loading, multiStore, posSettings]);
+  }, [
+    cartLines.length,
+    checkoutLoading,
+    hasSelectedCurrency,
+    hasSelectedCustomer,
+    hasActiveDefaultLocation,
+    htbNeedsCustomerSelection,
+    loading,
+    multiStore,
+  ]);
+
+  const checkoutDebugInfo = useMemo(
+    () => ({
+      multiStore,
+      loading,
+      checkoutLoading,
+      cartCount: cartLines.length,
+      posDefaultLocationId: posSettings?.defaultLocationId ?? null,
+      posBranchName:
+        posSettings?.branchName != null && String(posSettings.branchName).trim() !== ""
+          ? String(posSettings.branchName).trim()
+          : null,
+      posTerminalId: posSettings?.terminalId ?? null,
+      posTerminalName:
+        posSettings?.terminalName != null && String(posSettings.terminalName).trim() !== ""
+          ? String(posSettings.terminalName).trim()
+          : null,
+      hasActiveDefaultLocation,
+      selectedCurrencyId: currencyId || null,
+      hasSelectedCurrency,
+      selectedCustomerId: saleType === "htb" ? null : customerId || null,
+      hasSelectedCustomer,
+      saleType,
+      htbNeedsCustomerSelection,
+      missingCheckoutItems,
+    }),
+    [
+      multiStore,
+      loading,
+      checkoutLoading,
+      cartLines.length,
+      posSettings,
+      hasActiveDefaultLocation,
+      currencyId,
+      hasSelectedCurrency,
+      saleType,
+      customerId,
+      hasSelectedCustomer,
+      htbNeedsCustomerSelection,
+      missingCheckoutItems,
+    ]
+  );
 
   const checkoutDisabled = missingCheckoutItems.length > 0;
 
@@ -962,8 +1031,9 @@ export function PosPage() {
     setPaymentError("");
     setLastReceipt(null);
     setCompletedSaleTypeLabel(null);
-    if (!multiStore && toPositiveInt(posSettings?.defaultLocationId) == null) {
-      const msg = "Default branch is not configured on the server (D365_BRANCH_ID GUID mapped to location.d365_id).";
+    if (!multiStore && !hasActiveDefaultLocation) {
+      const msg =
+        "Default branch is not configured as an active location on the server (D365_BRANCH_ID GUID mapped to active location.d365_id).";
       if (fromPaymentModal) setPaymentError(msg);
       else setError(msg);
       return;
@@ -997,6 +1067,9 @@ export function PosPage() {
               : parseInt(customerId, 10),
         currency_id: parseInt(currencyId, 10),
         sale_type: saleType,
+        ...(!multiStore && hasActiveDefaultLocation
+          ? { location_id: defaultLocationId }
+          : {}),
         items: cartLines.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
@@ -1013,6 +1086,11 @@ export function PosPage() {
       const result = await api.pos.checkout(payload);
       setCompletedSaleTypeLabel(saleTypeLabel(saleType, saleTypes));
       setLastReceipt(result);
+      setNextDocumentNumber(
+        result?.nextDocumentNumber != null && String(result.nextDocumentNumber).trim() !== ""
+          ? String(result.nextDocumentNumber).trim()
+          : null
+      );
       setPaymentModalOpen(false);
       setPaymentAmountsByMethod({});
       setPaymentReference("");
@@ -1033,6 +1111,16 @@ export function PosPage() {
 
   function handlePayClick() {
     if (checkoutDisabled) {
+      // Emit detailed diagnostics immediately on click so operators can capture
+      // the exact blocker even if the UI state changes right after.
+      try {
+        console.error("[POS checkout blocked]", {
+          at: new Date().toISOString(),
+          checkoutDebugInfo,
+        });
+      } catch {
+        /* ignore */
+      }
       setMissingCheckoutInfoOpen(true);
       return;
     }
@@ -1107,9 +1195,12 @@ export function PosPage() {
         <div className="pos-page-header-block">
           <div className="pos-page-header-title-row">
             <h1>Point of sale</h1>
-            {headerBranchName ? (
-              <span className="pos-header-branch" title="Branch">
-                {headerBranchName}
+            {headerBranchName || headerTerminalName ? (
+              <span className="pos-header-location" title="Location and terminal">
+                {headerBranchName ? <span className="pos-header-branch">{headerBranchName}</span> : null}
+                {headerTerminalName ? (
+                  <span className="pos-header-terminal-code">{headerTerminalName}</span>
+                ) : null}
               </span>
             ) : null}
           </div>
@@ -1120,6 +1211,14 @@ export function PosPage() {
       {error && !paymentModalOpen ? (
         <div className="alert alert-error" role="alert">
           {error}
+        </div>
+      ) : null}
+      {missingCheckoutInfoOpen ? (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Checkout debug</h3>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {JSON.stringify(checkoutDebugInfo, null, 2)}
+          </pre>
         </div>
       ) : null}
 
@@ -1476,6 +1575,10 @@ export function PosPage() {
 
           <aside className="card pos-cart">
             <h2 className="pos-cart-title">Current sale</h2>
+            <div className="pos-next-doc" aria-live="polite">
+              <span className="pos-next-doc-label">Next document no.</span>
+              <code className="pos-next-doc-value">{nextDocumentNumber || "—"}</code>
+            </div>
             {saleType === "htb" ? (
               <div
                 className={`pos-htb-selection${htbCreditSelection ? " pos-htb-selection--active" : ""}`}

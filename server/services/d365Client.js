@@ -1,6 +1,7 @@
 /**
  * Dataverse Web API (Dynamics 365) using Azure AD client credentials.
  * Env: D365_TENANT_ID, D365_CLIENT_ID, D365_CLIENT_SECRET, D365_BASE_URL (org root, e.g. https://org.crm.dynamics.com)
+ * Optional: D365_SCOPE (full `https://…/.default` if scope must differ from D365_BASE_URL),
  * Optional: D365_CREDIT_ENTITY_SET (default htb365_creditapplications), D365_CREDIT_STATUS_LABEL (default FINAL APPROVED),
  *           D365_CREDIT_STATUS_VALUE (skip metadata if set — integer for htb365_status; pair with D365_CREDIT_STATUS_LABEL for display),
  *           D365_CREDIT_CUSTOMER_EXPAND (full OData $expand segment if metadata/default $select is wrong),
@@ -13,11 +14,14 @@
  *           D365_CREDIT_BRANCH_LOOKUP (legacy OData FK; default _htb365_branch_value),
  *           D365_BRANCH_ENTITY_SET (Web API set for branch row lookup by id; default htb365_branches; falls back to htb365_branch on 404),
  *           D365_CREDIT_CUSTOMER_LOOKUP (OData FK attribute for customer GUID on credit app; default _htb365_customer_value)
+ * Optional: D365_POST_LOAN_ACTION (unbound action segment; default htb365_PostLoanTransaction)
  */
 
 const DATAVERSE_API_VERSION = "v9.2";
 
 let cachedToken = { accessToken: null, expiresAt: 0 };
+/** @type {Promise<string> | null} coalesce parallel token fetches */
+let inFlightTokenPromise = null;
 let cachedStatusValue = { key: null, value: null, label: null };
 let cachedCustomerExpand = { key: null, expandInner: null, navNames: null };
 let cachedBranchNav = { key: null, navName: null };
@@ -72,57 +76,91 @@ function d365ConfigError() {
   return "D365 is not configured. Set D365_TENANT_ID, D365_CLIENT_ID, D365_CLIENT_SECRET, and D365_BASE_URL (organization URL).";
 }
 
+/** Optional override: full scope URL ending in `/.default` (otherwise derived from D365_BASE_URL). */
+function getTokenScope() {
+  const explicit = requireEnv("D365_SCOPE");
+  if (explicit) return explicit;
+  const orgRoot = getOrgRoot();
+  return orgRoot ? `${orgRoot}/.default` : null;
+}
+
+function clearAccessTokenCache() {
+  cachedToken = { accessToken: null, expiresAt: 0 };
+}
+
+/**
+ * Azure AD client_credentials token for Dataverse. Caches until near expiry, then
+ * obtains a new access token (client_credentials has no refresh_token — re-request
+ * the token endpoint). Safe under concurrent callers (single in-flight fetch).
+ * @returns {Promise<string>}
+ */
 async function getAccessToken() {
   const tenantId = requireEnv("D365_TENANT_ID");
   const clientId = requireEnv("D365_CLIENT_ID");
   const clientSecret = requireEnv("D365_CLIENT_SECRET");
-  const orgRoot = getOrgRoot();
-  if (!tenantId || !clientId || !clientSecret || !orgRoot) {
+  const scope = getTokenScope();
+  if (!tenantId || !clientId || !clientSecret || !scope) {
     const err = new Error(d365ConfigError());
     err.statusCode = 503;
     throw err;
   }
 
   const now = Date.now();
-  if (cachedToken.accessToken && cachedToken.expiresAt > now + 60_000) {
+  const skewMs = 60_000;
+  if (cachedToken.accessToken && cachedToken.expiresAt > now + skewMs) {
     return cachedToken.accessToken;
   }
 
-  const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(
-    tenantId
-  )}/oauth2/v2.0/token`;
-  const scope = `${orgRoot}/.default`;
-  const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: "client_credentials",
-    scope,
-  });
-
-  const res = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg =
-      json.error_description ||
-      json.error ||
-      `Token request failed (${res.status})`;
-    const err = new Error(msg);
-    err.statusCode = res.status === 401 || res.status === 403 ? 502 : 502;
-    throw err;
+  if (inFlightTokenPromise) {
+    return inFlightTokenPromise;
   }
-  const expiresIn = Number(json.expires_in) || 3600;
-  cachedToken = {
-    accessToken: json.access_token,
-    expiresAt: now + expiresIn * 1000,
-  };
-  return cachedToken.accessToken;
+
+  inFlightTokenPromise = (async () => {
+    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(
+      tenantId
+    )}/oauth2/v2.0/token`;
+    const body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "client_credentials",
+      scope,
+    });
+
+    const res = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        json.error_description ||
+        json.error ||
+        `Token request failed (${res.status})`;
+      const err = new Error(msg);
+      err.statusCode = 502;
+      throw err;
+    }
+    const expiresIn = Number(json.expires_in) || 3600;
+    const issuedAt = Date.now();
+    cachedToken = {
+      accessToken: json.access_token,
+      expiresAt: issuedAt + expiresIn * 1000,
+    };
+    return cachedToken.accessToken;
+  })();
+
+  try {
+    return await inFlightTokenPromise;
+  } finally {
+    inFlightTokenPromise = null;
+  }
 }
 
-async function dataverseRequest(pathWithLeadingSlash, { method = "GET", headers = {} } = {}) {
+async function dataverseRequest(
+  pathWithLeadingSlash,
+  { method = "GET", headers = {}, body = undefined, _retried401 = false } = {}
+) {
   const base = getWebApiBase();
   if (!base) {
     const err = new Error(d365ConfigError());
@@ -131,23 +169,37 @@ async function dataverseRequest(pathWithLeadingSlash, { method = "GET", headers 
   }
   const token = await getAccessToken();
   const url = `${base}${pathWithLeadingSlash.startsWith("/") ? "" : "/"}${pathWithLeadingSlash}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
-      Prefer: 'odata.include-annotations="OData.Community.Display.V1.FormattedValue"',
-      ...headers,
-    },
-  });
+  const requestHeaders = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    "OData-MaxVersion": "4.0",
+    "OData-Version": "4.0",
+    Prefer: 'odata.include-annotations="OData.Community.Display.V1.FormattedValue"',
+    ...headers,
+  };
+  const fetchOptions = { method, headers: requestHeaders };
+  if (body !== undefined) {
+    if (!requestHeaders["Content-Type"] && !requestHeaders["content-type"]) {
+      requestHeaders["Content-Type"] = "application/json";
+    }
+    fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
+  }
+  const res = await fetch(url, fetchOptions);
   const text = await res.text();
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = { raw: text };
+  }
+  if (res.status === 401 && !_retried401) {
+    clearAccessTokenCache();
+    return dataverseRequest(pathWithLeadingSlash, {
+      method,
+      headers,
+      body,
+      _retried401: true,
+    });
   }
   if (!res.ok) {
     const msg =
@@ -801,9 +853,86 @@ async function listFinalApprovedCreditApplications(options = {}) {
   };
 }
 
+function postLoanTransactionPath() {
+  const seg = (requireEnv("D365_POST_LOAN_ACTION") || "htb365_PostLoanTransaction").trim();
+  const clean = seg.replace(/^\/+/, "");
+  return `/${clean}`;
+}
+
+/**
+ * Build Dataverse body: { transactionJson: "<stringified { invoice, payments }>" }.
+ * @param {object} params
+ * @param {string|number} params.poreference
+ * @param {string|number} params.grandtotal
+ * @param {string|number} params.documentno
+ * @param {string} params.dateinvoiced
+ * @param {string} params.currency
+ * @param {{ amount: string|number, payment_method?: string, paymentMethod?: string }[]} params.payments
+ */
+function buildPostLoanTransactionBody(params) {
+  const invoice = {
+    poreference: String(params.poreference ?? ""),
+    grandtotal: String(params.grandtotal ?? ""),
+    documentno: String(params.documentno ?? ""),
+    dateinvoiced: String(params.dateinvoiced ?? ""),
+    currency: String(params.currency ?? ""),
+  };
+  const rawPayments = Array.isArray(params.payments) ? params.payments : [];
+  const payments = rawPayments.map((p) => ({
+    amount: String(p?.amount ?? ""),
+    payment_method: String(p?.payment_method ?? p?.paymentMethod ?? ""),
+  }));
+  const inner = { invoice, payments };
+  return { transactionJson: JSON.stringify(inner) };
+}
+
+function validatePostLoanTransactionParams(body) {
+  const errors = [];
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return ["Request body must be a JSON object."];
+  }
+  for (const f of ["poreference", "grandtotal", "documentno", "dateinvoiced", "currency"]) {
+    const v = body[f];
+    if (v === undefined || v === null || String(v).trim() === "") {
+      errors.push(`Missing or empty: ${f}`);
+    }
+  }
+  if (!Array.isArray(body.payments) || body.payments.length === 0) {
+    errors.push("payments must be a non-empty array.");
+  } else {
+    body.payments.forEach((p, i) => {
+      const amount = p?.amount;
+      const method = p?.payment_method ?? p?.paymentMethod;
+      if (amount === undefined || amount === null || String(amount).trim() === "") {
+        errors.push(`payments[${i}].amount is required.`);
+      }
+      if (method === undefined || method === null || String(method).trim() === "") {
+        errors.push(`payments[${i}].payment_method is required.`);
+      }
+    });
+  }
+  return errors;
+}
+
+/**
+ * POST unbound action htb365_PostLoanTransaction (override with D365_POST_LOAN_ACTION).
+ * @param {object} body Same fields as local API: invoice scalars + payments[].
+ * @returns {Promise<object|null>}
+ */
+async function postLoanTransaction(body) {
+  const path = postLoanTransactionPath();
+  const payload = buildPostLoanTransactionBody(body);
+  return dataverseRequest(path, { method: "POST", body: payload });
+}
+
 module.exports = {
   d365Configured,
   d365ConfigError,
+  getAccessToken,
+  clearAccessTokenCache,
   listFinalApprovedCreditApplications,
   getFinalApprovedCreditApplicationById,
+  buildPostLoanTransactionBody,
+  validatePostLoanTransactionParams,
+  postLoanTransaction,
 };

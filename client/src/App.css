@@ -258,6 +258,70 @@
   white-space: nowrap;
 }
 
+.location-terminals-row > td {
+  background: var(--overlay-faint);
+  padding: 0.75rem 1rem 1rem;
+}
+
+.location-terminals-row:hover > td {
+  background: var(--overlay-faint);
+}
+
+.location-terminals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.location-terminals--modal {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.location-terminals-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.location-terminals-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.location-terminals-header h2 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.location-terminals-empty {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.location-terminals-table-wrap {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.location-terminals-table {
+  font-size: 0.85rem;
+}
+
+.location-terminals-table th {
+  background: var(--table-header-bg);
+}
+
 .nowrap {
   white-space: nowrap;
 }
@@ -372,6 +436,10 @@
 
 .modal-panel--payment {
   width: min(680px, 100%);
+}
+
+.modal-panel--wide {
+  width: min(880px, 100%);
 }
 
 .modal-header {
@@ -498,7 +566,6 @@ code {
 }
 
 .pos-header-branch {
-  margin-left: auto;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--text, inherit);
@@ -507,6 +574,24 @@ code {
   text-overflow: ellipsis;
   overflow: hidden;
   max-width: min(100%, 22rem);
+}
+
+.pos-header-location {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.pos-header-terminal-code {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .pos-receipt {
@@ -1120,6 +1205,30 @@ code {
 .pos-cart-title {
   margin: 0;
   font-size: 1rem;
+  font-weight: 600;
+}
+
+.pos-next-doc {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--overlay-faint);
+}
+
+.pos-next-doc-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pos-next-doc-value {
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
