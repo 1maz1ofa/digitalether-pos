@@ -27,6 +27,8 @@ function readStoredHtbCreditSelection() {
         o.capNumber != null && String(o.capNumber).trim() !== ""
           ? String(o.capNumber).trim()
           : null,
+      retailPrice:
+        o.retailPrice === "" || o.retailPrice === undefined ? null : o.retailPrice,
       installmentAmount:
         o.installmentAmount === "" || o.installmentAmount === undefined ? null : o.installmentAmount,
       numberOfInstallmentsMonths:
@@ -526,6 +528,7 @@ export function PosPage() {
           row.capNumber != null && String(row.capNumber).trim() !== ""
             ? String(row.capNumber).trim()
             : prev.capNumber ?? null,
+        retailPrice: row.retailPrice ?? prev.retailPrice,
         installmentAmount: row.installmentAmount ?? prev.installmentAmount,
         numberOfInstallmentsMonths:
           row.numberOfInstallmentsMonths ?? prev.numberOfInstallmentsMonths,
@@ -537,6 +540,7 @@ export function PosPage() {
       if (
         next.customerDisplayName === prev.customerDisplayName &&
         next.capNumber === prev.capNumber &&
+        next.retailPrice === prev.retailPrice &&
         next.installmentAmount === prev.installmentAmount &&
         next.numberOfInstallmentsMonths === prev.numberOfInstallmentsMonths &&
         next.customer365Guid === prev.customer365Guid &&
@@ -1399,6 +1403,7 @@ export function PosPage() {
                         <th scope="col">Last name</th>
                         <th scope="col">National ID</th>
                         <th scope="col">Address</th>
+                        <th scope="col">Retail price</th>
                         <th scope="col">Maximum installment amount</th>
                         <th scope="col">number of installments (months)</th>
                         <th scope="col">Status</th>
@@ -1426,6 +1431,7 @@ export function PosPage() {
                           <td className="pos-d365-address">
                             {row.customerAddress != null && row.customerAddress !== "" ? String(row.customerAddress) : "—"}
                           </td>
+                          <td>{money(row.retailPrice)}</td>
                           <td>{money(row.installmentAmount)}</td>
                           <td>{row.numberOfInstallmentsMonths ?? "—"}</td>
                           <td>{row.statusLabel ?? String(row.status ?? "—")}</td>
@@ -1454,6 +1460,7 @@ export function PosPage() {
                                     row.capNumber != null && String(row.capNumber).trim() !== ""
                                       ? String(row.capNumber).trim()
                                       : null,
+                                  retailPrice: row.retailPrice ?? null,
                                   installmentAmount: row.installmentAmount ?? null,
                                   numberOfInstallmentsMonths: row.numberOfInstallmentsMonths ?? null,
                                   insuranceRate: row.insuranceRate ?? null,
@@ -1625,6 +1632,10 @@ export function PosPage() {
                       <div>
                         <dt>Number of installments (months)</dt>
                         <dd>{htbCreditSelection.numberOfInstallmentsMonths ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Retail price</dt>
+                        <dd>{money(htbCreditSelection.retailPrice)}</dd>
                       </div>
                       <div>
                         <dt>Maximum installment amount</dt>
