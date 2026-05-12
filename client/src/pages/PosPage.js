@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import {
+  createClientCheckoutProfiler,
+  isCheckoutProfileEnabled,
+  presentCheckoutProfileReport,
+} from "../checkoutProfileClient";
 import { Modal } from "../components/Modal";
+import { clearPosWorkstation, readPosWorkstation, writePosWorkstation } from "../posWorkstationStorage";
 
 const MULTI_STORE_STORAGE_KEY = "de-pos-multi-store";
 const HTB_CREDIT_SELECTION_STORAGE_KEY = "de-pos-htb-credit-selection";
@@ -445,6 +451,13 @@ export function PosPage() {
   const [saleLocationPromiseSourcesByProductId, setSaleLocationPromiseSourcesByProductId] = useState(
     () => new Map()
   );
+  const [terminals, setTerminals] = useState([]);
+  /** `null` closed; `setup` first visit or invalid saved ids; `change` from header. */
+  const [workstationModalMode, setWorkstationModalMode] = useState(null);
+  const [workstationFormLocationId, setWorkstationFormLocationId] = useState("");
+  const [workstationFormTerminalId, setWorkstationFormTerminalId] = useState("");
+  const [workstationFormError, setWorkstationFormError] = useState("");
+  const [workstationSaving, setWorkstationSaving] = useState(false);
 
   const filteredD365CreditRecords = useMemo(
     () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
@@ -455,17 +468,27 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const [p, loc, cust, settings, methods, currencyRows, saleTypeRows] = await Promise.all([
-        api.products.list(),
-        api.locations.list(),
-        api.customers.list(),
-        api.pos.settings(),
-        api.pos.paymentMethods(),
-        api.currencies.list(),
-        api.pos.saleTypes(),
-      ]);
+      const ws = readPosWorkstation();
+      const settingsReq =
+        ws != null
+          ? api.pos.settings({ locationId: ws.locationId, terminalId: ws.terminalId })
+          : api.pos.settings();
+      const [p, loc, cust, termRows, settings, methods, currencyRows, saleTypeRows] =
+        await Promise.all([
+          api.products.list(),
+          api.locations.list(),
+          api.customers.list(),
+          api.terminals.list(),
+          settingsReq,
+          api.pos.paymentMethods(),
+          api.currencies.list(),
+          api.pos.saleTypes(),
+        ]);
+      const activeLocs = loc.filter((l) => l.is_active !== false);
       setProducts(p);
-      setLocations(loc.filter((l) => l.is_active !== false));
+      setLocations(activeLocs);
+      const termList = Array.isArray(termRows) ? termRows : [];
+      setTerminals(termList);
       setCustomers(cust);
       const activeCustomers = Array.isArray(cust) ? cust : [];
       setCustomerId((prev) => {
@@ -480,6 +503,25 @@ export function PosPage() {
           ? String(settings.nextDocumentNumber).trim()
           : null
       );
+      const locOk =
+        settings?.defaultLocationId != null &&
+        activeLocs.some((l) => String(l.id) === String(settings.defaultLocationId));
+      const termOk =
+        settings?.terminalId != null &&
+        termList.some(
+          (t) =>
+            String(t.id) === String(settings.terminalId) &&
+            String(t.location_id) === String(settings.defaultLocationId) &&
+            t.is_active !== false
+        );
+      if (!locOk || !termOk) {
+        setWorkstationFormLocationId(ws ? String(ws.locationId) : "");
+        setWorkstationFormTerminalId(ws ? String(ws.terminalId) : "");
+        setWorkstationFormError("");
+        setWorkstationModalMode("setup");
+      } else {
+        setWorkstationModalMode(null);
+      }
       setPaymentMethods(Array.isArray(methods) ? methods : []);
       const activeCurrencies = Array.isArray(currencyRows)
         ? currencyRows.filter((c) => c && c.is_active !== false)
@@ -507,15 +549,50 @@ export function PosPage() {
     }
   }, []);
 
+  const signOutRegister = useCallback(async () => {
+    clearPosWorkstation();
+    setCart(new Map());
+    setLastReceipt(null);
+    setPaymentModalOpen(false);
+    setPaymentError("");
+    setPaymentAmountsByMethod({});
+    setPaymentReference("");
+    setHtbCreditSelection(null);
+    persistHtbCreditSelection(null);
+    await load();
+  }, [load]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  /** Dynamics branch row id for the POS store (`location.d365_id`), used to filter D365 credit applications. */
+  const posBranchD365Id = useMemo(() => {
+    const locId = posSettings?.defaultLocationId;
+    if (locId == null) return null;
+    const loc = (locations || []).find((l) => String(l.id) === String(locId));
+    const raw = loc?.d365_id;
+    if (raw == null || String(raw).trim() === "") return null;
+    return String(raw).trim();
+  }, [posSettings?.defaultLocationId, locations]);
 
   const loadD365CreditApps = useCallback(async () => {
     setD365Error("");
     setD365Loading(true);
     try {
-      const data = await api.d365.finalApprovedCreditApplications(200);
+      if (!posBranchD365Id) {
+        setD365Records([]);
+        setD365Meta(null);
+        setD365Error(
+          posSettings?.defaultLocationId == null
+            ? "Set up the POS workstation (store and register) before loading HTB credit applications."
+            : "This store has no Dynamics branch id (d365_id). Set it on the location record, then refresh."
+        );
+        return;
+      }
+      const data = await api.d365.finalApprovedCreditApplications(200, {
+        branchD365Id: posBranchD365Id,
+      });
       setD365Records(Array.isArray(data.records) ? data.records : []);
       setD365Meta({
         statusValue: data.statusValue,
@@ -530,7 +607,7 @@ export function PosPage() {
     } finally {
       setD365Loading(false);
     }
-  }, []);
+  }, [posBranchD365Id, posSettings?.defaultLocationId]);
 
   useEffect(() => {
     if (saleType !== "htb") return;
@@ -557,7 +634,10 @@ export function PosPage() {
     setHtbCreditSelection((prev) => {
       if (!prev?.creditApplicationId) return prev;
       const row = d365Records.find((r) => String(r?.id) === String(prev.creditApplicationId));
-      if (!row) return prev;
+      if (!row) {
+        persistHtbCreditSelection(null);
+        return null;
+      }
       const customerDisplayName = formatHtbCreditCustomerName(row);
       const next = {
         ...prev,
@@ -616,11 +696,11 @@ export function PosPage() {
   }, [locations]);
 
   const headerBranchName = useMemo(() => {
-    const fromEnv =
+    const fromSettings =
       posSettings?.branchName != null && String(posSettings.branchName).trim() !== ""
         ? String(posSettings.branchName).trim()
         : null;
-    if (fromEnv) return fromEnv;
+    if (fromSettings) return fromSettings;
     const locId = toPositiveInt(posSettings?.defaultLocationId);
     if (locId != null) {
       const fromList = locationNameById.get(locId);
@@ -768,8 +848,10 @@ export function PosPage() {
     saleType === "htb" ||
     (customerId !== "" && customers.some((c) => String(c.id) === String(customerId)));
   const defaultLocationId = toPositiveInt(posSettings?.defaultLocationId);
+  const posTerminalId = toPositiveInt(posSettings?.terminalId);
   const hasActiveDefaultLocation =
     defaultLocationId != null &&
+    posTerminalId != null &&
     locations.some((l) => l.is_active !== false && String(l.id) === String(defaultLocationId));
 
   const refreshSaleLocationStock = useCallback(async () => {
@@ -802,12 +884,7 @@ export function PosPage() {
         const fromLoc = toPositiveInt(row.from_location_id);
         if (fromLoc == null) continue;
         const promisedQ = Number(row.promised_quantity);
-        const reservedQ = Number(row.reserved_quantity);
-        const q = Math.max(
-          0,
-          (Number.isFinite(promisedQ) ? promisedQ : 0) -
-            (Number.isFinite(reservedQ) ? reservedQ : 0)
-        );
+        const q = Math.max(0, Number.isFinite(promisedQ) ? promisedQ : 0);
         if (q <= 0) continue;
         promisedNext.set(pid, (promisedNext.get(pid) || 0) + q);
         const sourceRows = promisedSourcesNext.get(pid) || [];
@@ -827,6 +904,69 @@ export function PosPage() {
       setSaleLocationPromiseSourcesByProductId(new Map());
     }
   }, [defaultLocationId, hasActiveDefaultLocation]);
+
+  const applyWorkstationFromForm = useCallback(async () => {
+    setWorkstationFormError("");
+    const locId = parseInt(workstationFormLocationId, 10);
+    const termId = parseInt(workstationFormTerminalId, 10);
+    if (!Number.isInteger(locId) || locId < 1) {
+      setWorkstationFormError("Choose a branch.");
+      return;
+    }
+    if (!Number.isInteger(termId) || termId < 1) {
+      setWorkstationFormError("Choose a terminal.");
+      return;
+    }
+    const loc = locations.find((l) => String(l.id) === String(locId));
+    if (!loc || loc.is_active === false) {
+      setWorkstationFormError("Invalid or inactive branch.");
+      return;
+    }
+    const term = terminals.find((t) => String(t.id) === String(termId));
+    if (!term || term.is_active === false || String(term.location_id) !== String(locId)) {
+      setWorkstationFormError(
+        "That terminal does not belong to the selected branch, or it is inactive."
+      );
+      return;
+    }
+    setWorkstationSaving(true);
+    try {
+      const settings = await api.pos.settings({ locationId: locId, terminalId: termId });
+      if (!settings?.terminalId || settings.defaultLocationId == null) {
+        setWorkstationFormError(
+          "Could not load settings for that combination. Confirm the terminal belongs to the branch."
+        );
+        return;
+      }
+      writePosWorkstation({ locationId: locId, terminalId: termId });
+      setPosSettings(settings);
+      setNextDocumentNumber(
+        settings?.nextDocumentNumber != null && String(settings.nextDocumentNumber).trim() !== ""
+          ? String(settings.nextDocumentNumber).trim()
+          : null
+      );
+      setWorkstationModalMode(null);
+    } catch (e) {
+      setWorkstationFormError(e.message || "Save failed");
+    } finally {
+      setWorkstationSaving(false);
+    }
+  }, [workstationFormLocationId, workstationFormTerminalId, locations, terminals]);
+
+  useEffect(() => {
+    if (!workstationModalMode) return;
+    if (!workstationFormTerminalId) return;
+    if (!workstationFormLocationId) return;
+    const term = terminals.find((t) => String(t.id) === workstationFormTerminalId);
+    if (!term || String(term.location_id) !== String(workstationFormLocationId)) {
+      setWorkstationFormTerminalId("");
+    }
+  }, [
+    workstationFormLocationId,
+    workstationModalMode,
+    terminals,
+    workstationFormTerminalId,
+  ]);
 
   const promisedLocationLabelForLine = useCallback(
     (productId, quantity) => {
@@ -913,8 +1053,7 @@ export function PosPage() {
               const reservedQ = Number(row.reserved_quantity);
               const availablePromisedQ = Math.max(
                 0,
-                (Number.isFinite(promisedQ) ? promisedQ : 0) -
-                  (Number.isFinite(reservedQ) ? reservedQ : 0)
+                Number.isFinite(promisedQ) ? promisedQ : 0
               );
               if (availablePromisedQ > 0) {
                 promisedNext.set(
@@ -950,11 +1089,10 @@ export function PosPage() {
     if (loading) missing.push("Wait for products and settings to finish loading.");
     if (checkoutLoading) missing.push("Checkout is already in progress.");
     if (
-      !multiStore &&
       !hasActiveDefaultLocation
     ) {
       missing.push(
-        "Configure an active default branch on the server (D365_BRANCH_ID GUID mapped to an active location.d365_id)."
+        "Choose this register’s branch and terminal (a prompt appears until both are saved; clear site data to pick again)."
       );
     }
     if (htbNeedsCustomerSelection) missing.push("Select an HTB customer (credit application).");
@@ -969,7 +1107,6 @@ export function PosPage() {
     hasActiveDefaultLocation,
     htbNeedsCustomerSelection,
     loading,
-    multiStore,
   ]);
 
   const checkoutDebugInfo = useMemo(
@@ -1306,9 +1443,9 @@ export function PosPage() {
     setPaymentError("");
     setLastReceipt(null);
     setCompletedSaleTypeLabel(null);
-    if (!multiStore && !hasActiveDefaultLocation) {
+    if (!hasActiveDefaultLocation) {
       const msg =
-        "Default branch is not configured as an active location on the server (D365_BRANCH_ID GUID mapped to active location.d365_id).";
+        "Choose this register’s branch and terminal before checkout (use Set up / Change register).";
       if (fromPaymentModal) setPaymentError(msg);
       else setError(msg);
       return;
@@ -1332,7 +1469,11 @@ export function PosPage() {
       return;
     }
     setCheckoutLoading(true);
+    const profileSale = isCheckoutProfileEnabled();
+    const clientProfiler = createClientCheckoutProfiler(profileSale);
+    clientProfiler.markStart();
     try {
+      clientProfiler.lap("build_checkout_payload");
       const payload = {
         customer_id:
           saleType === "htb"
@@ -1342,8 +1483,11 @@ export function PosPage() {
               : parseInt(customerId, 10),
         currency_id: parseInt(currencyId, 10),
         sale_type: saleType,
-        ...(!multiStore && hasActiveDefaultLocation
-          ? { location_id: defaultLocationId }
+        ...(hasActiveDefaultLocation
+          ? {
+              location_id: defaultLocationId,
+              terminal_id: posTerminalId,
+            }
           : {}),
         items: cartLines.map((l) => ({
           product_id: l.product_id,
@@ -1358,7 +1502,8 @@ export function PosPage() {
           : {}),
         ...(paymentPayload || {}),
       };
-      const result = await api.pos.checkout(payload);
+      const result = await api.pos.checkout(payload, { profile: profileSale });
+      clientProfiler.lap("api_pos_checkout_roundtrip");
       setCompletedSaleTypeLabel(saleTypeLabel(saleType, saleTypes));
       setLastReceipt(result);
       setNextDocumentNumber(
@@ -1376,7 +1521,16 @@ export function PosPage() {
       setD365CreditAppsListExpanded(true);
       setCustomerId(saleType === "cash" ? resolveDefaultCustomerId(customers) : "");
       void refreshSaleLocationStock();
+      if (saleType === "htb") {
+        void loadD365CreditApps();
+      }
+      clientProfiler.lap("post_success_state_and_background_refreshes");
+      const clientTimings = clientProfiler.done();
+      presentCheckoutProfileReport(clientTimings, result?.checkoutProfile);
     } catch (e) {
+      if (profileSale) {
+        presentCheckoutProfileReport(clientProfiler.done(), null);
+      }
       const msg = e.message || "Checkout failed";
       if (fromPaymentModal) setPaymentError(msg);
       else setError(msg);
@@ -1478,6 +1632,37 @@ export function PosPage() {
                   <span className="pos-header-terminal-code">{headerTerminalName}</span>
                 ) : null}
               </span>
+            ) : null}
+            {hasActiveDefaultLocation ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginLeft: 8 }}
+                  onClick={() => {
+                    setWorkstationFormError("");
+                    setWorkstationFormLocationId(
+                      posSettings?.defaultLocationId != null ? String(posSettings.defaultLocationId) : ""
+                    );
+                    setWorkstationFormTerminalId(
+                      posSettings?.terminalId != null ? String(posSettings.terminalId) : ""
+                    );
+                    setWorkstationModalMode("change");
+                  }}
+                >
+                  Change register
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginLeft: 8 }}
+                  disabled={loading}
+                  title="Clear saved branch and terminal for this browser"
+                  onClick={() => void signOutRegister()}
+                >
+                  Sign out
+                </button>
+              </>
             ) : null}
           </div>
           <p className="page-lead">Ring up sales; totals use catalog prices at checkout.</p>
@@ -2112,7 +2297,87 @@ export function PosPage() {
       </div>
 
       <Modal
-        title="Can't complete sale yet"
+        title={workstationModalMode === "change" ? "Change register" : "Set up this register"}
+        isOpen={workstationModalMode != null}
+        onClose={() => {
+          if (workstationModalMode === "change") setWorkstationModalMode(null);
+        }}
+        footer={
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            {workstationModalMode === "change" ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={workstationSaving}
+                onClick={() => setWorkstationModalMode(null)}
+              >
+                Cancel
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={workstationSaving}
+              onClick={() => void applyWorkstationFromForm()}
+            >
+              {workstationSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        }
+      >
+        <p className="muted" style={{ marginTop: 0 }}>
+          Choose the branch (location) and terminal for this browser. The choice is stored locally until
+          you clear site data for this app.
+        </p>
+        {workstationFormError ? (
+          <div className="alert alert-error" role="alert" style={{ marginBottom: 12 }}>
+            {workstationFormError}
+          </div>
+        ) : null}
+        <div className="form-grid">
+          <label className="field">
+            <span className="field-label">Branch</span>
+            <select
+              className="input"
+              value={workstationFormLocationId}
+              onChange={(e) => {
+                setWorkstationFormLocationId(e.target.value);
+              }}
+            >
+              <option value="">— Select branch —</option>
+              {locations.map((l) => (
+                <option key={l.id} value={String(l.id)}>
+                  {l.name || l.code || `Location #${l.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">Terminal</span>
+            <select
+              className="input"
+              value={workstationFormTerminalId}
+              onChange={(e) => setWorkstationFormTerminalId(e.target.value)}
+              disabled={!workstationFormLocationId}
+            >
+              <option value="">— Select terminal —</option>
+              {terminals
+                .filter(
+                  (t) =>
+                    String(t.location_id) === String(workstationFormLocationId) &&
+                    t.is_active !== false
+                )
+                .map((t) => (
+                  <option key={t.id} value={String(t.id)}>
+                    {t.name || t.code || `Terminal #${t.id}`}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={missingCheckoutInfoOpen}
         onClose={() => setMissingCheckoutInfoOpen(false)}
         footer={
@@ -2172,8 +2437,8 @@ export function PosPage() {
             </p>
             {defaultLocationId == null ? (
               <p className="alert alert-error" style={{ margin: 0 }}>
-                This POS branch is not configured, so no promises can be matched.
-                Configure an active default branch on the server (D365_BRANCH_ID).
+                This register has no branch and terminal configured yet. Complete the register setup
+                prompt, then try again.
               </p>
             ) : null}
             <label className="field">

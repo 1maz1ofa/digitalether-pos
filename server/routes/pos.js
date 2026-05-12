@@ -3,6 +3,10 @@ const crypto = require("crypto");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 const {
+  isPosCheckoutProfilingEnabled,
+  createCheckoutProfiler,
+} = require("../utils/checkoutProfiler");
+const {
   d365Configured,
   d365ConfigError,
   getFinalApprovedCreditApplicationById,
@@ -121,13 +125,16 @@ async function getLocationProductSellabilityForUpdate(client, productId, locatio
     [productId, locationId]
   );
   const incomingOutstanding = incoming.rows.reduce(
-    (sum, row) => sum + Math.max(0, Number(row.promised_quantity) - Number(row.reserved_quantity)),
+    (sum, row) => sum + Math.max(0, Number(row.promised_quantity)),
     0
   );
-  const outgoingOutstanding = outgoing.rows.reduce(
-    (sum, row) => sum + Math.max(0, Number(row.promised_quantity) - Number(row.reserved_quantity)),
-    0
-  );
+  const outgoingOutstanding = outgoing.rows.reduce((sum, row) => {
+    const open = Number(row.promised_quantity);
+    const reserved = Number(row.reserved_quantity);
+    const openN = Number.isFinite(open) ? Math.max(0, open) : 0;
+    const reservedN = Number.isFinite(reserved) ? Math.max(0, reserved) : 0;
+    return sum + openN + reservedN;
+  }, 0);
   const sellable = onHand + incomingOutstanding - outgoingOutstanding;
   return {
     onHand,
@@ -148,7 +155,7 @@ async function reserveIncomingPromisesForSale(client, productId, toLocationId, a
      FROM inventory_promise
      WHERE product_id = $1
        AND to_location_id = $2
-       AND GREATEST(COALESCE(promised_quantity, 0) - COALESCE(reserved_quantity, 0), 0) > 0
+       AND COALESCE(promised_quantity, 0) > 0
      ORDER BY created_at ASC, id ASC
      FOR UPDATE`,
     [productId, toLocationId]
@@ -157,13 +164,13 @@ async function reserveIncomingPromisesForSale(client, productId, toLocationId, a
   for (const row of rows) {
     if (remaining <= 0) break;
     const promised = Number(row.promised_quantity);
-    const reserved = Number(row.reserved_quantity);
-    const available = Math.max(0, promised - reserved);
+    const available = Math.max(0, promised);
     if (available <= 0) continue;
     const consume = Math.min(available, remaining);
     await client.query(
       `UPDATE inventory_promise
-       SET reserved_quantity = COALESCE(reserved_quantity, 0) + $1
+       SET promised_quantity = GREATEST(COALESCE(promised_quantity, 0) - $1, 0),
+           reserved_quantity = COALESCE(reserved_quantity, 0) + $1
        WHERE id = $2`,
       [consume, Number(row.id)]
     );
@@ -266,59 +273,6 @@ function calculateHtbInstallmentFromDeposit({
   return roundMoney(installment);
 }
 
-function branchGuidFromEnv() {
-  const raw =
-    process.env.D365_BRANCH_ID ??
-    process.env.d365_branch_id ??
-    process.env.BRANCH_ID ??
-    process.env.branch_id;
-  if (raw === undefined || raw === null) return null;
-  const guid = String(raw).trim().toLowerCase();
-  if (guid === "") return null;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guid)) {
-    return null;
-  }
-  return guid;
-}
-
-function normalizeGuidLike(value) {
-  if (value === undefined || value === null) return null;
-  const text = String(value).trim();
-  if (text === "") return null;
-  const hexOnly = text
-    .toLowerCase()
-    .replace(/[{}]/g, "")
-    .replace(/-/g, "");
-  if (!/^[0-9a-f]{32}$/.test(hexOnly)) return null;
-  return hexOnly;
-}
-
-function readTerminalLabelFromEnv() {
-  const preferredName =
-    process.env.TERMINAL_NAME ??
-    process.env.terminal_name ??
-    process.env.REACT_APP_TERMINAL_NAME ??
-    process.env.REACT_APP_terminal_name;
-  if (preferredName != null && String(preferredName).trim() !== "") {
-    return String(preferredName).trim();
-  }
-  const fallbackCode =
-    process.env.TERMINAL_CODE ??
-    process.env.terminal_code ??
-    process.env.REACT_APP_TERMINAL_CODE ??
-    process.env.REACT_APP_terminal_code;
-  if (fallbackCode != null && String(fallbackCode).trim() !== "") {
-    return String(fallbackCode).trim();
-  }
-  return null;
-}
-
-function normalizeTerminalMatchValue(value) {
-  if (value === undefined || value === null) return null;
-  const text = String(value).trim();
-  return text === "" ? null : text;
-}
-
 function parseTerminalCounter(raw) {
   if (raw === undefined || raw === null || raw === "") return null;
   try {
@@ -342,59 +296,17 @@ function documentNumberFromTerminal(terminalCode, nextNumber, startingNumber) {
   return `${safeCode}-${String(next).padStart(width, "0")}`;
 }
 
-async function resolveActiveTerminalForPos(client, locationIdHint = null) {
-  const terminalCodeFromEnv = normalizeTerminalMatchValue(
-    process.env.TERMINAL_CODE ??
-      process.env.terminal_code ??
-      process.env.REACT_APP_TERMINAL_CODE ??
-      process.env.REACT_APP_terminal_code
-  );
-  const terminalNameFromEnv = normalizeTerminalMatchValue(
-    process.env.TERMINAL_NAME ??
-      process.env.terminal_name ??
-      process.env.REACT_APP_TERMINAL_NAME ??
-      process.env.REACT_APP_terminal_name
-  );
-  const locationId = Number.isInteger(locationIdHint) && locationIdHint > 0 ? locationIdHint : null;
-  const filters = ["COALESCE(t.is_active, true) = true"];
-  const values = [];
-  let idx = 1;
-  if (locationId !== null) {
-    filters.push(`t.location_id = $${idx++}`);
-    values.push(locationId);
-  }
-  if (terminalCodeFromEnv) {
-    filters.push(`UPPER(TRIM(COALESCE(t.code, ''))) = UPPER($${idx++})`);
-    values.push(terminalCodeFromEnv);
-  } else if (terminalNameFromEnv) {
-    filters.push(`UPPER(TRIM(COALESCE(t.name, ''))) = UPPER($${idx++})`);
-    values.push(terminalNameFromEnv);
-  }
-  const { rows } = await client.query(
-    `SELECT t.id, t.code, t.name, t.starting_number, t.next_number
-     FROM terminal t
-     WHERE ${filters.join(" AND ")}
-     ORDER BY t.id ASC
-     LIMIT 1`,
-    values
-  );
-  return rows[0] || null;
-}
-
-async function defaultLocationFromEnv(client, { requireActive = false } = {}) {
-  const rawGuid = branchGuidFromEnv();
-  const guidHex = normalizeGuidLike(rawGuid);
-  if (!guidHex) return null;
-  const where = requireActive
-    ? "LOWER(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', '')) = $1 AND COALESCE(is_active, true) = true"
-    : "LOWER(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', '')) = $1";
+async function resolveLocationById(client, locationId, { requireActive = true } = {}) {
+  const id = Number(locationId);
+  if (!Number.isInteger(id) || id < 1) return null;
+  const activeClause = requireActive ? "AND COALESCE(is_active, true) = true" : "";
   const { rows } = await client.query(
     `SELECT id, name, code
      FROM location
-     WHERE ${where}
+     WHERE id = $1 ${activeClause}
      ORDER BY id ASC
      LIMIT 1`,
-    [guidHex]
+    [id]
   );
   if (!rows.length) return null;
   const row = rows[0];
@@ -405,59 +317,60 @@ async function defaultLocationFromEnv(client, { requireActive = false } = {}) {
   };
 }
 
+/**
+ * Active terminal at `locationId` with primary key `terminalId`.
+ */
+async function resolveTerminalForPosByIds(client, locationId, terminalId) {
+  const locId = Number(locationId);
+  const termId = Number(terminalId);
+  if (!Number.isInteger(locId) || locId < 1 || !Number.isInteger(termId) || termId < 1) {
+    return null;
+  }
+  const { rows } = await client.query(
+    `SELECT t.id, t.code, t.name, t.starting_number, t.next_number, t.location_id
+     FROM terminal t
+     WHERE t.id = $1
+       AND t.location_id = $2
+       AND COALESCE(t.is_active, true) = true
+     LIMIT 1`,
+    [termId, locId]
+  );
+  return rows[0] || null;
+}
+
 router.get("/debug/default-location", async (req, res) => {
   try {
-    const rawGuid =
-      process.env.D365_BRANCH_ID ??
-      process.env.d365_branch_id ??
-      process.env.BRANCH_ID ??
-      process.env.branch_id ??
-      null;
-    const normalizedGuid = normalizeGuidLike(rawGuid);
-    const locations = normalizedGuid
-      ? (
-          await pool.query(
-            `SELECT id, code, name, d365_id::text AS d365_id, COALESCE(is_active, true) AS is_active
-             FROM location
-             WHERE LOWER(REPLACE(REPLACE(REPLACE(TRIM(d365_id::text), '-', ''), '{', ''), '}', '')) = $1
-             ORDER BY id ASC`,
-            [normalizedGuid]
-          )
-        ).rows
-      : [];
-    const activeLocation =
-      locations.find((row) => row.is_active === true) || null;
-    const resolved = await defaultLocationFromEnv(pool, { requireActive: true });
-    const terminal = await resolveActiveTerminalForPos(
-      pool,
-      resolved?.id ?? null
-    );
+    const rawLoc = req.query.location_id;
+    const rawTerm = req.query.terminal_id;
+    const parsedLoc = parseInt(rawLoc, 10);
+    const parsedTerm = parseInt(rawTerm, 10);
+    const resolved =
+      Number.isInteger(parsedLoc) && parsedLoc >= 1
+        ? await resolveLocationById(pool, parsedLoc, { requireActive: false })
+        : null;
+    const terminal =
+      resolved && Number.isInteger(parsedTerm) && parsedTerm >= 1
+        ? await resolveTerminalForPosByIds(pool, resolved.id, parsedTerm)
+        : null;
 
     return res.json({
-      branchEnv: {
-        raw: rawGuid,
-        normalized: normalizedGuid,
-        hasValidGuidFormat: normalizedGuid != null,
+      query: {
+        location_id: rawLoc ?? null,
+        terminal_id: rawTerm ?? null,
       },
-      matches: {
-        locationsByBranchGuid: locations,
-        activeLocationFromMatches: activeLocation,
-        resolvedDefaultLocation: resolved,
-        resolvedTerminal: terminal
-          ? {
-              id: terminal.id,
-              code: terminal.code ?? null,
-              name: terminal.name ?? null,
-              starting_number: terminal.starting_number ?? null,
-              next_number: terminal.next_number ?? null,
-            }
-          : null,
-      },
+      resolvedDefaultLocation: resolved,
+      resolvedTerminal: terminal
+        ? {
+            id: terminal.id,
+            code: terminal.code ?? null,
+            name: terminal.name ?? null,
+            starting_number: terminal.starting_number ?? null,
+            next_number: terminal.next_number ?? null,
+          }
+        : null,
       tips: [
-        "branchEnv.normalized must not be null.",
-        "matches.locationsByBranchGuid should contain at least one row.",
-        "At least one matched location must have is_active=true.",
-        "matches.resolvedTerminal should be non-null for checkout.",
+        "Pass ?location_id= and &terminal_id= (numeric ids) to mirror POS workstation resolution.",
+        "Terminal must belong to the location and be active.",
       ],
     });
   } catch (err) {
@@ -488,19 +401,35 @@ function isDuplicateHtbCreditApplicationError(err) {
 
 router.get("/settings", async (req, res) => {
   try {
-    const fromEnv = await defaultLocationFromEnv(pool);
-    const terminal = await resolveActiveTerminalForPos(pool, fromEnv?.id ?? null);
+    const rawLoc = req.query.location_id;
+    const rawTerm = req.query.terminal_id;
+    const parsedLoc = parseInt(rawLoc, 10);
+    const parsedTerm = parseInt(rawTerm, 10);
+
+    let resolvedLocation = null;
+    let terminal = null;
+    if (
+      Number.isInteger(parsedLoc) &&
+      parsedLoc >= 1 &&
+      Number.isInteger(parsedTerm) &&
+      parsedTerm >= 1
+    ) {
+      resolvedLocation = await resolveLocationById(pool, parsedLoc, { requireActive: true });
+      if (resolvedLocation) {
+        terminal = await resolveTerminalForPosByIds(pool, resolvedLocation.id, parsedTerm);
+      }
+    }
+
     const htbMaxDepositPercent = readHtbMaxDepositPercent();
-    const terminalLabel = readTerminalLabelFromEnv();
     if (htbMaxDepositPercent === null) {
       return res.status(500).json({
         error: "HTB_MAX_DEPOSIT_PERCENT must be a number greater than 0 and less than 100.",
       });
     }
     res.json({
-      defaultLocationId: fromEnv?.id ?? null,
-      branchName: fromEnv?.name || fromEnv?.code || null,
-      terminalName: terminal?.name || terminal?.code || terminalLabel,
+      defaultLocationId: resolvedLocation?.id ?? null,
+      branchName: resolvedLocation?.name || resolvedLocation?.code || null,
+      terminalName: terminal?.name || terminal?.code || null,
       terminalId: terminal?.id ?? null,
       nextDocumentNumber: terminal
         ? documentNumberFromTerminal(terminal.code, terminal.next_number, terminal.starting_number)
@@ -738,6 +667,8 @@ router.get("/htb/export", async (req, res) => {
  * Lines are grouped by resolved location: one completed invoice per distinct location.
  */
 router.post("/checkout", async (req, res) => {
+  const checkoutProfileEnabled = isPosCheckoutProfilingEnabled(req);
+  const profiler = createCheckoutProfiler(checkoutProfileEnabled);
   let customerId = null;
   const rawCustomer = req.body?.customer_id;
   if (rawCustomer !== undefined && rawCustomer !== null && rawCustomer !== "") {
@@ -798,8 +729,18 @@ router.post("/checkout", async (req, res) => {
     });
   }
   normalizedPayments = parsedPayments;
+  profiler.markStart();
   const client = await pool.connect();
+  profiler.lap("pool_connect");
   try {
+    const rawTerminalId = req.body?.terminal_id;
+    const parsedCheckoutTerminalId = parseInt(rawTerminalId, 10);
+    if (!Number.isInteger(parsedCheckoutTerminalId) || parsedCheckoutTerminalId < 1) {
+      return res.status(400).json({
+        error: "terminal_id is required and must be a positive integer (POS register).",
+      });
+    }
+
     const defaultLocationRaw = req.body?.location_id;
     let resolvedDefaultLocationId = null;
     if (
@@ -813,8 +754,9 @@ router.post("/checkout", async (req, res) => {
       }
       resolvedDefaultLocationId = parsed;
     } else {
-      const fromEnv = await defaultLocationFromEnv(client, { requireActive: true });
-      resolvedDefaultLocationId = fromEnv?.id ?? null;
+      return res.status(400).json({
+        error: "location_id is required (POS branch / workstation).",
+      });
     }
     const hasDefaultLocation =
       resolvedDefaultLocationId != null &&
@@ -918,6 +860,7 @@ router.post("/checkout", async (req, res) => {
         locationId: lineLocationId,
       });
     }
+    profiler.lap("validate_customer_currency_sale_type_and_price_lines");
 
     const locationIds = [...new Set(pricedLines.map((L) => L.locationId))];
     for (const locId of locationIds) {
@@ -958,6 +901,7 @@ router.post("/checkout", async (req, res) => {
         return res.status(400).json({ error: "One or more selected payment methods are invalid or inactive" });
       }
     }
+    profiler.lap("validate_locations_loan_method_and_payment_methods");
 
     const byLocation = new Map();
     for (const L of pricedLines) {
@@ -971,8 +915,29 @@ router.post("/checkout", async (req, res) => {
     let htbCreditApplicationId = null;
     let htbCapNumber = null;
     if (saleType === "htb") {
+      const locD365Res = await client.query(
+        `SELECT d365_id::text AS d365_id
+         FROM location
+         WHERE id = $1
+         LIMIT 1`,
+        [resolvedDefaultLocationId]
+      );
+      const htbBranchD365Raw = locD365Res.rows[0]?.d365_id;
+      const htbBranchD365Id =
+        htbBranchD365Raw != null && String(htbBranchD365Raw).trim() !== ""
+          ? String(htbBranchD365Raw).trim()
+          : null;
+      const guidRe =
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      if (!htbBranchD365Id || !guidRe.test(htbBranchD365Id)) {
+        return res.status(400).json({
+          error:
+            "HTB checkout requires the POS location to have a valid Dynamics branch id (d365_id) on the store record.",
+        });
+      }
       htbCustomerRecord = await getFinalApprovedCreditApplicationById(
-        req.body?.d365_credit_application_id
+        req.body?.d365_credit_application_id,
+        { branchD365Id: htbBranchD365Id.toLowerCase() }
       );
       if (!htbCustomerRecord) {
         return res.status(400).json({
@@ -993,6 +958,7 @@ router.post("/checkout", async (req, res) => {
           : null;
       htbCapNumber = safeText(htbCustomerRecord?.capNumber);
     }
+    profiler.lap("group_lines_by_location_and_htb_d365_credit_lookup");
 
     await client.query("BEGIN");
 
@@ -1020,6 +986,7 @@ router.post("/checkout", async (req, res) => {
         customerId = Number(insRows[0].id);
       }
     }
+    profiler.lap("transaction_begin_and_htb_local_customer");
 
     const requestedQtyByProductLocation = new Map();
     for (const L of pricedLines) {
@@ -1068,11 +1035,17 @@ router.post("/checkout", async (req, res) => {
       }
       promisedQtyConsumedByProductLocation.set(key, neededFromIncomingPromises);
     }
+    profiler.lap("inventory_sellability_checks_and_promise_reservations");
 
-    const terminal = await resolveActiveTerminalForPos(client, resolvedDefaultLocationId);
+    const terminal = await resolveTerminalForPosByIds(
+      client,
+      resolvedDefaultLocationId,
+      parsedCheckoutTerminalId
+    );
     if (!terminal) {
       return res.status(400).json({
-        error: "No active terminal found for POS. Configure an active terminal first.",
+        error:
+          "No matching active terminal for this location_id and terminal_id. Pick a terminal that belongs to the selected branch.",
       });
     }
     const terminalLockedRows = await client.query(
@@ -1102,6 +1075,7 @@ router.post("/checkout", async (req, res) => {
         error: "Configured terminal is missing a code required for document numbering.",
       });
     }
+    profiler.lap("terminal_resolve_lock_and_payment_validation_prep");
 
     const invoices = [];
     let invIndex = 0;
@@ -1206,6 +1180,7 @@ router.post("/checkout", async (req, res) => {
     for (const [key, qty] of promisedQtyConsumedByProductLocation.entries()) {
       remainingPromisedQtyByProductLocation.set(key, Number(qty) || 0);
     }
+    profiler.lap("prepare_invoice_and_movement_payloads");
 
     for (const [locId, groupLines] of byLocation) {
       const invoiceSubTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineSubTotal, 0));
@@ -1391,6 +1366,7 @@ router.post("/checkout", async (req, res) => {
       }
       invoices.push({ invoice, items: savedItems });
     }
+    profiler.lap("insert_invoices_items_inventory_movements_and_payments");
 
     await client.query(
       `UPDATE terminal
@@ -1400,26 +1376,30 @@ router.post("/checkout", async (req, res) => {
     );
 
     await client.query("COMMIT");
+    profiler.lap("terminal_counter_update_and_commit");
 
     let htbD365Loan = null;
     if (runHtbLoanAfterCheckout && htbD365LoanBodies && htbD365LoanBodies.length > 0) {
-      const attempts = [];
-      for (const loanBody of htbD365LoanBodies) {
-        try {
-          const data = await postLoanTransaction(loanBody);
-          attempts.push({ documentno: loanBody.documentno, ok: true, data: data ?? null });
-        } catch (loanErr) {
-          console.error("[pos/checkout] HTB postLoanTransaction failed:", loanErr.message);
-          attempts.push({
-            documentno: loanBody.documentno,
-            ok: false,
-            error: loanErr.message || String(loanErr),
-          });
-        }
-      }
+      const attempts = await Promise.all(
+        htbD365LoanBodies.map(async (loanBody) => {
+          try {
+            const data = await postLoanTransaction(loanBody);
+            return { documentno: loanBody.documentno, ok: true, data: data ?? null };
+          } catch (loanErr) {
+            console.error("[pos/checkout] HTB postLoanTransaction failed:", loanErr.message);
+            return {
+              documentno: loanBody.documentno,
+              ok: false,
+              error: loanErr.message || String(loanErr),
+            };
+          }
+        })
+      );
       htbD365Loan = { attempts, allOk: attempts.every((a) => a.ok) };
     }
+    profiler.lap("htb_d365_post_loan_after_commit_or_skipped");
 
+    const checkoutProfileSummary = profiler.done();
     res.status(201).json({
       invoices,
       nextDocumentNumber: documentNumberFromTerminal(
@@ -1428,12 +1408,19 @@ router.post("/checkout", async (req, res) => {
         terminalLocked.starting_number
       ),
       ...(htbD365Loan ? { htbD365Loan } : {}),
+      ...(checkoutProfileSummary ? { checkoutProfile: checkoutProfileSummary } : {}),
     });
   } catch (err) {
     try {
       await client.query("ROLLBACK");
     } catch {
       /* ignore */
+    }
+    if (checkoutProfileEnabled) {
+      const partial = profiler.done();
+      if (partial) {
+        console.warn("[pos/checkout] checkoutProfile (error path, partial):", partial);
+      }
     }
     if (saleType === "htb" && isDuplicateHtbCreditApplicationError(err)) {
       return res.status(409).json({

@@ -11,9 +11,12 @@ const {
 const router = express.Router();
 
 /**
- * GET /api/d365/credit-applications/final-approved?top=200
+ * GET /api/d365/credit-applications/final-approved?top=200&branch_d365_id=<guid>
  * Lists htb365_creditapplication rows where htb365_status matches label FINAL APPROVED (metadata lookup)
  * or D365_CREDIT_STATUS_VALUE when set.
+ * Optional branch_d365_id: Dynamics branch row id (same as location.d365_id on the POS store); filters
+ * credit applications to that branch. When omitted, branch filter falls back to D365_BRANCH_NAME /
+ * D365_BRANCH_ID env if set, otherwise no branch filter.
  */
 router.get("/credit-applications/final-approved", async (req, res) => {
   if (!d365Configured()) {
@@ -21,6 +24,19 @@ router.get("/credit-applications/final-approved", async (req, res) => {
   }
   try {
     const top = req.query.top !== undefined ? Number(req.query.top) : 200;
+    const rawBranch = req.query.branch_d365_id;
+    let branchD365Id;
+    if (rawBranch !== undefined && rawBranch !== null && String(rawBranch).trim() !== "") {
+      const t = String(rawBranch).trim();
+      const guidRe =
+        /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      if (!guidRe.test(t)) {
+        return res.status(400).json({
+          error: "branch_d365_id must be a valid GUID (Dynamics branch id for the POS location).",
+        });
+      }
+      branchD365Id = t.toLowerCase();
+    }
     const {
       statusValue,
       statusLabel,
@@ -30,6 +46,7 @@ router.get("/credit-applications/final-approved", async (req, res) => {
       records,
     } = await listFinalApprovedCreditApplications({
       top,
+      branchD365Id,
     });
     res.json({
       statusValue,

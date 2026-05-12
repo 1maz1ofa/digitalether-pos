@@ -15,6 +15,10 @@
  *           D365_BRANCH_ENTITY_SET (Web API set for branch row lookup by id; default htb365_branches; falls back to htb365_branch on 404),
  *           D365_CREDIT_CUSTOMER_LOOKUP (OData FK attribute for customer GUID on credit app; default _htb365_customer_value)
  * Optional: D365_POST_LOAN_ACTION (unbound action segment; default htb365_PostLoanTransaction)
+ *
+ * Performance: set D365_CREDIT_STATUS_VALUE (integer) to skip picklist metadata; set D365_CREDIT_CUSTOMER_EXPAND,
+ * D365_CREDIT_BRANCH_NAV, and D365_CREDIT_INSTALLMENTS_NAV to skip Many-to-One metadata. POS checkout passes
+ * branch GUID and uses a single retrieve-by-id instead of a filtered list when D365_CREDIT_BRANCH_LOOKUP matches the org.
  */
 
 const DATAVERSE_API_VERSION = "v9.2";
@@ -26,6 +30,13 @@ let cachedStatusValue = { key: null, value: null, label: null };
 let cachedCustomerExpand = { key: null, expandInner: null, navNames: null };
 let cachedBranchNav = { key: null, navName: null };
 let cachedInstallmentsNav = { key: null, navName: null };
+
+/** One Many-to-One metadata payload serves customer / branch / installments nav resolution. */
+const CREDIT_APPLICATION_ENTITY_LOGICAL = "htb365_creditapplication";
+let cachedCreditAppManyToOneRelationships = { key: null, rels: null };
+/** @type {Promise<object[]> | null} */
+let inFlightCreditAppM2OPromise = null;
+
 const CREDIT_APPLICATION_SELECT_COLUMNS = [
   "htb365_creditapplicationid",
   "htb365_id",
@@ -303,6 +314,41 @@ function entitySetName() {
   return requireEnv("D365_CREDIT_ENTITY_SET") || "htb365_creditapplications";
 }
 
+/**
+ * Single EntityDefinitions Many-to-One fetch for htb365_creditapplication (shared by customer / branch / installments resolvers).
+ * @returns {Promise<object[]>}
+ */
+async function fetchCreditApplicationManyToOneRelationships() {
+  if (
+    cachedCreditAppManyToOneRelationships.rels != null &&
+    cachedCreditAppManyToOneRelationships.key === CREDIT_APPLICATION_ENTITY_LOGICAL
+  ) {
+    return cachedCreditAppManyToOneRelationships.rels;
+  }
+  if (inFlightCreditAppM2OPromise) {
+    return inFlightCreditAppM2OPromise;
+  }
+
+  inFlightCreditAppM2OPromise = (async () => {
+    const path =
+      `/EntityDefinitions(LogicalName='${CREDIT_APPLICATION_ENTITY_LOGICAL}')/ManyToOneRelationships` +
+      `?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
+    const data = await dataverseRequest(path);
+    const rels = Array.isArray(data?.value) ? data.value : [];
+    cachedCreditAppManyToOneRelationships = {
+      key: CREDIT_APPLICATION_ENTITY_LOGICAL,
+      rels,
+    };
+    return rels;
+  })();
+
+  try {
+    return await inFlightCreditAppM2OPromise;
+  } finally {
+    inFlightCreditAppM2OPromise = null;
+  }
+}
+
 /** @returns {string | null} lowercase canonical GUID or null */
 function parseGuidEnv(value) {
   if (value === undefined || value === null) return null;
@@ -311,6 +357,11 @@ function parseGuidEnv(value) {
     /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   if (!re.test(t)) return null;
   return t.toLowerCase();
+}
+
+function normalizeGuidKeyLoose(value) {
+  if (value === undefined || value === null) return "";
+  return String(value).replace(/[{}-]/g, "").toLowerCase();
 }
 
 function escapeODataString(s) {
@@ -322,7 +373,17 @@ function escapeODataString(s) {
  * @param {string | null} branchNavResolved OData navigation property from metadata (or env override).
  * @returns {{ mode: 'name', navProperty: string, nameColumn: string, branchName: string } | { mode: 'lookup', branchId: string, lookupFilterKey: string } | null}
  */
-function resolveBranchFilterForQuery(branchNavResolved = null) {
+function resolveBranchFilterForQuery(branchNavResolved = null, explicitBranchD365Id = null) {
+  const explicit =
+    explicitBranchD365Id != null && String(explicitBranchD365Id).trim() !== ""
+      ? parseGuidEnv(String(explicitBranchD365Id).trim())
+      : null;
+  if (explicit) {
+    const lookupFilterKey =
+      requireEnv("D365_CREDIT_BRANCH_LOOKUP") || "_htb365_branch_value";
+    return { mode: "lookup", branchId: explicit, lookupFilterKey };
+  }
+
   const nameRaw = requireEnv("D365_BRANCH_NAME");
   if (nameRaw) {
     const branchName = String(nameRaw).trim();
@@ -423,12 +484,9 @@ async function resolveCustomerExpandParts() {
     };
   }
 
-  const path =
-    `/EntityDefinitions(LogicalName='${entityLogical}')/ManyToOneRelationships` +
-    `?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
-  let data;
+  let rels;
   try {
-    data = await dataverseRequest(path);
+    rels = await fetchCreditApplicationManyToOneRelationships();
   } catch (e) {
     const err = new Error(
       `Could not read Many-to-One metadata to resolve customer expand. ` +
@@ -439,11 +497,11 @@ async function resolveCustomerExpandParts() {
     throw err;
   }
 
-  const rels = Array.isArray(data?.value) ? data.value : [];
+  const relsList = Array.isArray(rels) ? rels : [];
   const attrLower = attrLogical.toLowerCase();
   const navNames = [
     ...new Set(
-      rels
+      relsList
         .filter((r) => {
           const ref =
             r.ReferencingAttribute ?? r.referencingattribute ?? "";
@@ -494,12 +552,9 @@ async function resolveCreditApplicationBranchNavName() {
     return cachedBranchNav.navName;
   }
 
-  const path =
-    `/EntityDefinitions(LogicalName='${entityLogical}')/ManyToOneRelationships` +
-    `?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
-  let data;
+  let rels;
   try {
-    data = await dataverseRequest(path);
+    rels = await fetchCreditApplicationManyToOneRelationships();
   } catch (e) {
     const err = new Error(
       `Could not read Many-to-One metadata to resolve branch navigation property. ` +
@@ -510,9 +565,9 @@ async function resolveCreditApplicationBranchNavName() {
     throw err;
   }
 
-  const rels = Array.isArray(data?.value) ? data.value : [];
+  const relsList = Array.isArray(rels) ? rels : [];
   const attrLower = attrLogical.toLowerCase();
-  const match = rels.find((r) => {
+  const match = relsList.find((r) => {
     const ref = r.ReferencingAttribute ?? r.referencingattribute ?? "";
     return String(ref).toLowerCase() === attrLower;
   });
@@ -552,12 +607,9 @@ async function resolveCreditApplicationInstallmentsNavName() {
     return cachedInstallmentsNav.navName;
   }
 
-  const path =
-    `/EntityDefinitions(LogicalName='${entityLogical}')/ManyToOneRelationships` +
-    `?$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName`;
-  let data;
+  let rels;
   try {
-    data = await dataverseRequest(path);
+    rels = await fetchCreditApplicationManyToOneRelationships();
   } catch (e) {
     const err = new Error(
       `Could not read Many-to-One metadata to resolve installments navigation property. ` +
@@ -568,9 +620,9 @@ async function resolveCreditApplicationInstallmentsNavName() {
     throw err;
   }
 
-  const rels = Array.isArray(data?.value) ? data.value : [];
+  const relsList = Array.isArray(rels) ? rels : [];
   const attrLower = attrLogical.toLowerCase();
-  const match = rels.find((r) => {
+  const match = relsList.find((r) => {
     const ref = r.ReferencingAttribute ?? r.referencingattribute ?? "";
     return String(ref).toLowerCase() === attrLower;
   });
@@ -626,7 +678,7 @@ async function listCreditApplicationsByStatusValue(
   const inner =
     expandInner ?? (await resolveCustomerExpandParts()).expandInner;
   let expandCombined = `${installmentsNav}($select=htb365_value),${inner}`;
-  if (branchFilter) {
+  if (branchFilter && branchFilter.mode !== "lookup") {
     const branchNav =
       branchNavResolved ||
       requireEnv("D365_CREDIT_BRANCH_NAV") ||
@@ -640,22 +692,85 @@ async function listCreditApplicationsByStatusValue(
   return dataverseRequest(path);
 }
 
-async function getFinalApprovedCreditApplicationById(creditApplicationId) {
+/**
+ * GET credit application by id (POS path): one round-trip vs filtered collection; branch enforced via lookup column.
+ * @param {string} idLower canonical GUID lowercase
+ * @param {number} statusValue FINAL APPROVED option value
+ * @param {{ mode: 'lookup', branchId: string, lookupFilterKey: string }} branchFilter
+ * @param {string} expandInner customer $expand fragment
+ */
+async function retrieveApprovedCreditApplicationForPosBranch(
+  idLower,
+  statusValue,
+  branchFilter,
+  expandInner
+) {
+  const set = entitySetName();
+  const installmentsNav = await resolveCreditApplicationInstallmentsNavName();
+  const inner = expandInner;
+  const expandCombined = `${installmentsNav}($select=htb365_value),${inner}`;
+  const lookupKey = branchFilter.lookupFilterKey;
+  const selectColumns = `${CREDIT_APPLICATION_SELECT_COLUMNS},${lookupKey}`;
+  const select = encodeURIComponent(selectColumns);
+  const expand = encodeURIComponent(expandCombined);
+  const path = `/${set}(${idLower})?$select=${select}&$expand=${expand}`;
+  let data;
+  try {
+    data = await dataverseRequest(path);
+  } catch (e) {
+    if (e.statusCode === 404) return null;
+    throw e;
+  }
+  if (!data || typeof data !== "object") return null;
+  if (Number(data.htb365_status) !== Number(statusValue)) return null;
+  const rowBranch = data[lookupKey];
+  if (
+    normalizeGuidKeyLoose(rowBranch) !== normalizeGuidKeyLoose(branchFilter.branchId)
+  ) {
+    return null;
+  }
+  return data;
+}
+
+async function getFinalApprovedCreditApplicationById(creditApplicationId, options = {}) {
   const rawId = String(creditApplicationId ?? "").trim();
   if (!isDataverseGuidString(rawId)) {
     const err = new Error("Invalid credit application id.");
     err.statusCode = 400;
     throw err;
   }
-  const { expandInner, navNames } = await resolveCustomerExpandParts();
-  const { value: statusValue } = await resolveFinalApprovedStatus();
-  const needsBranchNav = Boolean(
-    requireEnv("D365_BRANCH_NAME") || requireEnv("D365_BRANCH_ID")
-  );
+  const explicitBranchGuid =
+    options.branchD365Id != null && String(options.branchD365Id).trim() !== ""
+      ? parseGuidEnv(String(options.branchD365Id).trim())
+      : null;
+
+  const [{ expandInner, navNames }, { value: statusValue }] = await Promise.all([
+    resolveCustomerExpandParts(),
+    resolveFinalApprovedStatus(),
+  ]);
+
+  if (explicitBranchGuid) {
+    const branchFilter = resolveBranchFilterForQuery(null, explicitBranchGuid);
+    if (!branchFilter || branchFilter.mode !== "lookup") {
+      const err = new Error("Invalid branch id for credit application lookup.");
+      err.statusCode = 400;
+      throw err;
+    }
+    const row = await retrieveApprovedCreditApplicationForPosBranch(
+      rawId.toLowerCase(),
+      statusValue,
+      branchFilter,
+      expandInner
+    );
+    if (!row) return null;
+    return mapRecord(row, { customerNavNames: navNames });
+  }
+
+  const needsBranchNav = Boolean(requireEnv("D365_BRANCH_NAME"));
   const branchNavResolved = needsBranchNav
     ? await resolveCreditApplicationBranchNavName()
     : null;
-  const branchFilter = resolveBranchFilterForQuery(branchNavResolved);
+  const branchFilter = resolveBranchFilterForQuery(branchNavResolved, null);
   const idFilter = `htb365_creditapplicationid eq ${rawId.toLowerCase()}`;
   const result = await listCreditApplicationsByStatusValue(
     statusValue,
@@ -800,17 +915,24 @@ function mapRecord(row, { customerNavNames } = {}) {
 }
 
 async function listFinalApprovedCreditApplications(options = {}) {
-  const { top } = options;
-  const { expandInner, navNames } = await resolveCustomerExpandParts();
-  const { value: statusValue, label: statusLabel } =
-    await resolveFinalApprovedStatus();
-  const needsBranchNav = Boolean(
-    requireEnv("D365_BRANCH_NAME") || requireEnv("D365_BRANCH_ID")
-  );
+  const { top, branchD365Id } = options;
+  const [{ expandInner, navNames }, { value: statusValue, label: statusLabel }] =
+    await Promise.all([
+      resolveCustomerExpandParts(),
+      resolveFinalApprovedStatus(),
+    ]);
+  const explicitListBranchGuid =
+    branchD365Id != null && String(branchD365Id).trim() !== ""
+      ? parseGuidEnv(String(branchD365Id).trim())
+      : null;
+  const needsBranchNav = Boolean(requireEnv("D365_BRANCH_NAME")) && !explicitListBranchGuid;
   const branchNavResolved = needsBranchNav
     ? await resolveCreditApplicationBranchNavName()
     : null;
-  const branchFilter = resolveBranchFilterForQuery(branchNavResolved);
+  const branchFilter = resolveBranchFilterForQuery(
+    branchNavResolved,
+    branchD365Id
+  );
   const branchNamePromise =
     branchFilter?.mode === "lookup"
       ? fetchBranchNameById(branchFilter.branchId)

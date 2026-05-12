@@ -61,7 +61,9 @@ router.get("/", async (req, res) => {
 
 /**
  * Create a promise: reserve a quantity from from_location toward to_location.
- * promised_quantity cannot exceed on-hand at from_location minus existing promises from that location for the product.
+ * promised_quantity cannot exceed on-hand at from_location minus existing commitments
+ * from that location for the product (each row counts promised_quantity + reserved_quantity;
+ * reserved_quantity grows when the destination POS consumes the promise).
  */
 router.post("/", async (req, res) => {
   const fromLocationId = parseRequiredPositiveInt(req.body?.from_location_id);
@@ -126,19 +128,19 @@ router.post("/", async (req, res) => {
     const onHand = inv.rows[0]?.quantity != null ? Number(inv.rows[0].quantity) : 0;
 
     const sumProm = await client.query(
-      `SELECT COALESCE(SUM(promised_quantity), 0)::numeric AS s
+      `SELECT COALESCE(SUM(COALESCE(promised_quantity, 0) + COALESCE(reserved_quantity, 0)), 0)::numeric AS s
        FROM inventory_promise
        WHERE product_id = $1 AND from_location_id = $2`,
       [productId, fromLocationId]
     );
-    const alreadyPromised = Number(sumProm.rows[0].s);
-    const available = onHand - alreadyPromised;
+    const alreadyCommitted = Number(sumProm.rows[0].s);
+    const available = onHand - alreadyCommitted;
 
     if (promisedQty > available) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         error: "Not enough available quantity at this location for this product",
-        detail: `Available to promise: ${available} (on hand: ${onHand}, already promised: ${alreadyPromised})`,
+        detail: `Available to promise: ${available} (on hand: ${onHand}, already committed via promises: ${alreadyCommitted})`,
       });
     }
 

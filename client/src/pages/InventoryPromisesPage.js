@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { readPosWorkstation } from "../posWorkstationStorage";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -51,8 +52,11 @@ export function InventoryPromisesPage() {
     const m = new Map();
     for (const p of fromLocationPromises) {
       const pid = p.product_id;
-      const q = Number(p.promised_quantity);
-      if (!Number.isFinite(q)) continue;
+      const open = Number(p.promised_quantity);
+      const reserved = Number(p.reserved_quantity);
+      const q =
+        (Number.isFinite(open) ? open : 0) +
+        (Number.isFinite(reserved) ? reserved : 0);
       m.set(pid, (m.get(pid) || 0) + q);
     }
     return m;
@@ -85,10 +89,15 @@ export function InventoryPromisesPage() {
     setError("");
     setLoading(true);
     try {
+      const ws = readPosWorkstation();
+      const settingsReq =
+        ws != null
+          ? api.pos.settings({ locationId: ws.locationId, terminalId: ws.terminalId })
+          : api.pos.settings();
       const [locs, prods, settings] = await Promise.all([
         api.locations.list(),
         api.products.list(),
-        api.pos.settings(),
+        settingsReq,
       ]);
       setLocations(locs);
       setProducts(prods.filter((p) => p.is_active !== false));
@@ -270,8 +279,9 @@ export function InventoryPromisesPage() {
           <h1>Stock promises</h1>
           <p className="page-lead">
             Commit quantities from your location&apos;s on-hand stock for another
-            location. You cannot promise more than on-hand minus promises already
-            recorded from this location.
+            location. You cannot promise more than on-hand minus all existing promise
+            commitments from this location (including quantities already reserved at the
+            destination POS).
           </p>
         </div>
         <div className="page-header-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>

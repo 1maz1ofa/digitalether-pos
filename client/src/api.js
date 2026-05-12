@@ -134,20 +134,42 @@ export const api = {
     remove: (id) => apiRequest(`/api/vat/${id}`, { method: "DELETE" }),
   },
   pos: {
-    settings: () => apiRequest("/api/pos/settings"),
+    settings: (opts = {}) => {
+      const params = new URLSearchParams();
+      const loc = opts.locationId ?? opts.location_id;
+      const term = opts.terminalId ?? opts.terminal_id;
+      if (loc != null && String(loc).trim() !== "") params.set("location_id", String(loc).trim());
+      if (term != null && String(term).trim() !== "") params.set("terminal_id", String(term).trim());
+      const q = params.toString();
+      return apiRequest(`/api/pos/settings${q ? `?${q}` : ""}`);
+    },
     paymentMethods: () => apiRequest("/api/pos/payment-methods"),
     saleTypes: () => apiRequest("/api/pos/sale-types"),
-    checkout: (data) =>
-      apiRequest("/api/pos/checkout", {
+    checkout: (data, opts = {}) => {
+      const headers = {};
+      if (opts.profile) {
+        headers["X-POS-Checkout-Profile"] = "1";
+      }
+      return apiRequest("/api/pos/checkout", {
         method: "POST",
         body: JSON.stringify(data),
-      }),
+        headers,
+      });
+    },
   },
   d365: {
-    finalApprovedCreditApplications: (top = 200) =>
-      apiRequest(
-        `/api/d365/credit-applications/final-approved?top=${encodeURIComponent(String(top))}`
-      ),
+    finalApprovedCreditApplications: (top = 200, opts = {}) => {
+      const params = new URLSearchParams();
+      params.set("top", String(top));
+      const branch =
+        opts.branchD365Id ?? opts.branch_d365_id ?? null;
+      if (branch != null && String(branch).trim() !== "") {
+        params.set("branch_d365_id", String(branch).trim());
+      }
+      return apiRequest(
+        `/api/d365/credit-applications/final-approved?${params.toString()}`
+      );
+    },
   },
   inventory: {
     movementTypes: () => apiRequest("/api/inventory/movement-types"),
