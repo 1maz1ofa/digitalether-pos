@@ -251,6 +251,36 @@
   margin-left: 0.35rem;
 }
 
+.table-link {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
+.detail-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1.25rem;
+  margin: 0;
+  align-items: baseline;
+}
+
+.detail-dl dt {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.detail-dl dd {
+  margin: 0;
+}
+
 .cell-clip {
   max-width: 220px;
   overflow: hidden;

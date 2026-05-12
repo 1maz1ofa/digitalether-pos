@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
 
@@ -192,8 +193,16 @@ export function ProductsPage() {
                 ) : (
                   rows.map((r) => (
                     <tr key={r.id}>
-                      <td><code>{r.code}</code></td>
-                      <td>{r.name}</td>
+                      <td>
+                        <Link to={`/products/${r.id}`} className="table-link">
+                          <code>{r.code}</code>
+                        </Link>
+                      </td>
+                      <td>
+                        <Link to={`/products/${r.id}`} className="table-link">
+                          {r.name}
+                        </Link>
+                      </td>
                       <td>{r.category_name || "—"}</td>
                       <td>{money(r.unit_price)}</td>
                       <td>{vatLabel(r)}</td>

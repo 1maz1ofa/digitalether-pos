@@ -23,6 +23,50 @@ router.get("/", async (req, res) => {
   }
 });
 
+/**
+ * Locations where this product has inventory and/or outgoing promises.
+ * promised_quantity is the total promised from each location (inventory_promise.from_location_id).
+ * reserved_quantity is the total reserved from each location (inventory_promise.from_location_id).
+ */
+router.get("/:id/inventory-locations", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+    const exists = await pool.query("SELECT 1 FROM product WHERE id = $1", [id]);
+    if (!exists.rowCount) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+    const { rows } = await pool.query(
+      `SELECT l.id AS location_id,
+              l.code AS location_code,
+              l.name AS location_name,
+              COALESCE(i.quantity, 0)::numeric AS total_quantity,
+              COALESCE(pr.sum_promised, 0)::numeric AS promised_quantity,
+              COALESCE(pr.sum_reserved, 0)::numeric AS reserved_quantity
+       FROM location l
+       LEFT JOIN inventory i ON i.location_id = l.id AND i.product_id = $1
+       LEFT JOIN (
+         SELECT from_location_id,
+                SUM(promised_quantity)::numeric AS sum_promised,
+                SUM(reserved_quantity)::numeric AS sum_reserved
+         FROM inventory_promise
+         WHERE product_id = $1
+         GROUP BY from_location_id
+       ) pr ON pr.from_location_id = l.id
+       WHERE i.id IS NOT NULL
+          OR COALESCE(pr.sum_promised, 0) <> 0
+          OR COALESCE(pr.sum_reserved, 0) <> 0
+       ORDER BY l.name NULLS LAST, l.code NULLS LAST, l.id`,
+      [id]
+    );
+    res.json(rows);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);

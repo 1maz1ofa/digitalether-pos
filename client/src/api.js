@@ -71,6 +71,8 @@ export const api = {
   products: {
     list: () => apiRequest("/api/products"),
     get: (id) => apiRequest(`/api/products/${id}`),
+    inventoryLocations: (id) =>
+      apiRequest(`/api/products/${encodeURIComponent(String(id))}/inventory-locations`),
     create: (data) =>
       apiRequest("/api/products", { method: "POST", body: JSON.stringify(data) }),
     update: (id, data) =>
@@ -198,5 +200,29 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    promises: {
+      list: ({ fromLocationId, productId } = {}) => {
+        const params = new URLSearchParams();
+        const id =
+          fromLocationId !== null && fromLocationId !== undefined
+            ? String(fromLocationId).trim()
+            : "";
+        if (id) params.set("from_location_id", id);
+        if (
+          productId !== null &&
+          productId !== undefined &&
+          String(productId).trim() !== ""
+        ) {
+          params.set("product_id", String(productId).trim());
+        }
+        const q = params.toString() ? `?${params.toString()}` : "";
+        return apiRequest(`/api/inventory/promises${q}`);
+      },
+      create: (data) =>
+        apiRequest("/api/inventory/promises", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+    },
   },
 };

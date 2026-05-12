@@ -12,6 +12,7 @@ const vatRouter = require("./routes/vat");
 const terminalsRouter = require("./routes/terminals");
 const invoicesRouter = require("./routes/invoices");
 const inventoryRouter = require("./routes/inventory");
+const inventoryPromisesRouter = require("./routes/inventoryPromises");
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/api/currencies", currenciesRouter);
 app.use("/api/vat", vatRouter);
 app.use("/api/terminals", terminalsRouter);
 app.use("/api/invoices", invoicesRouter);
+app.use("/api/inventory/promises", inventoryPromisesRouter);
 app.use("/api/inventory", inventoryRouter);
 
 // ✅ Database test route

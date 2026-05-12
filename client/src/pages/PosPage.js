@@ -403,6 +403,18 @@ export function PosPage() {
   /** Per-location on-hand for the product in the "Select store" modal (`ready` = loaded from API). */
   const [pickProductStockByLoc, setPickProductStockByLoc] = useState(() => new Map());
   const [pickProductStockStatus, setPickProductStockStatus] = useState("idle");
+  /**
+   * For the product in the "Select store" modal, total quantity each source
+   * location has promised TO this POS branch (i.e. to `defaultLocationId`).
+   * Keyed by `from_location_id`.
+   */
+  const [pickProductPromisedByLoc, setPickProductPromisedByLoc] = useState(
+    () => new Map()
+  );
+  const [pickProductReservedByLoc, setPickProductReservedByLoc] = useState(
+    () => new Map()
+  );
+  const [pickProductPromisesStatus, setPickProductPromisesStatus] = useState("idle");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentAmountsByMethod, setPaymentAmountsByMethod] = useState({});
   const [paymentReference, setPaymentReference] = useState("");
@@ -420,6 +432,17 @@ export function PosPage() {
   const [d365CreditAppsListExpanded, setD365CreditAppsListExpanded] = useState(true);
   /** On-hand quantity at the POS default branch (product id → qty). */
   const [saleLocationStockByProductId, setSaleLocationStockByProductId] = useState(
+    () => new Map()
+  );
+  /** Promised quantity to the POS default branch (product id → qty). */
+  const [saleLocationPromisedByProductId, setSaleLocationPromisedByProductId] = useState(
+    () => new Map()
+  );
+  /**
+   * Promised source locations for the POS default branch
+   * (product id → [{ locationId, quantity }]).
+   */
+  const [saleLocationPromiseSourcesByProductId, setSaleLocationPromiseSourcesByProductId] = useState(
     () => new Map()
   );
 
@@ -752,22 +775,84 @@ export function PosPage() {
   const refreshSaleLocationStock = useCallback(async () => {
     if (!hasActiveDefaultLocation || defaultLocationId == null) {
       setSaleLocationStockByProductId(new Map());
+      setSaleLocationPromisedByProductId(new Map());
+      setSaleLocationPromiseSourcesByProductId(new Map());
       return;
     }
     try {
-      const rows = await api.inventory.stock({ locationId: defaultLocationId });
+      const [stockRows, promiseRows] = await Promise.all([
+        api.inventory.stock({ locationId: defaultLocationId }),
+        api.inventory.promises.list(),
+      ]);
       const next = new Map();
-      for (const row of Array.isArray(rows) ? rows : []) {
+      for (const row of Array.isArray(stockRows) ? stockRows : []) {
         const pid = toPositiveInt(row.product_id);
         if (pid == null) continue;
         const q = Number(row.quantity);
         next.set(pid, Number.isFinite(q) ? q : 0);
       }
       setSaleLocationStockByProductId(next);
+      const promisedNext = new Map();
+      const promisedSourcesNext = new Map();
+      for (const row of Array.isArray(promiseRows) ? promiseRows : []) {
+        const toLoc = toPositiveInt(row.to_location_id);
+        if (toLoc !== defaultLocationId) continue;
+        const pid = toPositiveInt(row.product_id);
+        if (pid == null) continue;
+        const fromLoc = toPositiveInt(row.from_location_id);
+        if (fromLoc == null) continue;
+        const promisedQ = Number(row.promised_quantity);
+        const reservedQ = Number(row.reserved_quantity);
+        const q = Math.max(
+          0,
+          (Number.isFinite(promisedQ) ? promisedQ : 0) -
+            (Number.isFinite(reservedQ) ? reservedQ : 0)
+        );
+        if (q <= 0) continue;
+        promisedNext.set(pid, (promisedNext.get(pid) || 0) + q);
+        const sourceRows = promisedSourcesNext.get(pid) || [];
+        const existingSource = sourceRows.find((x) => x.locationId === fromLoc);
+        if (existingSource) {
+          existingSource.quantity += q;
+        } else {
+          sourceRows.push({ locationId: fromLoc, quantity: q });
+        }
+        promisedSourcesNext.set(pid, sourceRows);
+      }
+      setSaleLocationPromisedByProductId(promisedNext);
+      setSaleLocationPromiseSourcesByProductId(promisedSourcesNext);
     } catch {
       setSaleLocationStockByProductId(new Map());
+      setSaleLocationPromisedByProductId(new Map());
+      setSaleLocationPromiseSourcesByProductId(new Map());
     }
   }, [defaultLocationId, hasActiveDefaultLocation]);
+
+  const promisedLocationLabelForLine = useCallback(
+    (productId, quantity) => {
+      if (!hasActiveDefaultLocation) return null;
+      const pid = toPositiveInt(productId);
+      if (pid == null) return null;
+      const requestedQty = Number(quantity);
+      if (!Number.isFinite(requestedQty) || requestedQty <= 0) return null;
+      const availableQty = Number(saleLocationStockByProductId.get(pid) ?? 0);
+      if (requestedQty <= Math.max(0, availableQty)) return null;
+      const sources = saleLocationPromiseSourcesByProductId.get(pid) || [];
+      if (!sources.length) return null;
+      const labels = sources
+        .map((row) => locationNameById.get(row.locationId) || `Store #${row.locationId}`)
+        .filter(Boolean);
+      if (!labels.length) return null;
+      if (labels.length === 1) return labels[0];
+      return "Multiple promised stores";
+    },
+    [
+      hasActiveDefaultLocation,
+      locationNameById,
+      saleLocationPromiseSourcesByProductId,
+      saleLocationStockByProductId,
+    ]
+  );
 
   useEffect(() => {
     void refreshSaleLocationStock();
@@ -777,36 +862,87 @@ export function PosPage() {
     if (!pickProduct?.id) {
       setPickProductStockByLoc(new Map());
       setPickProductStockStatus("idle");
+      setPickProductPromisedByLoc(new Map());
+      setPickProductReservedByLoc(new Map());
+      setPickProductPromisesStatus("idle");
       return;
     }
     let cancelled = false;
     setPickProductStockStatus("loading");
     setPickProductStockByLoc(new Map());
+    setPickProductPromisesStatus("loading");
+    setPickProductPromisedByLoc(new Map());
+    setPickProductReservedByLoc(new Map());
     (async () => {
-      try {
-        const rows = await api.inventory.stock({ productId: pickProduct.id });
-        const next = new Map();
-        for (const row of Array.isArray(rows) ? rows : []) {
-          const lid = toPositiveInt(row.location_id);
-          if (lid == null) continue;
-          const q = Number(row.quantity);
-          next.set(lid, Number.isFinite(q) ? q : 0);
-        }
-        if (!cancelled) {
+      const productId = pickProduct.id;
+      const stockPromise = api.inventory
+        .stock({ productId })
+        .then((rows) => {
+          if (cancelled) return;
+          const next = new Map();
+          for (const row of Array.isArray(rows) ? rows : []) {
+            const lid = toPositiveInt(row.location_id);
+            if (lid == null) continue;
+            const q = Number(row.quantity);
+            next.set(lid, Number.isFinite(q) ? q : 0);
+          }
           setPickProductStockByLoc(next);
           setPickProductStockStatus("ready");
-        }
-      } catch {
-        if (!cancelled) {
+        })
+        .catch(() => {
+          if (cancelled) return;
           setPickProductStockByLoc(new Map());
           setPickProductStockStatus("error");
-        }
-      }
+        });
+      const promisesPromise = api.inventory.promises
+        .list({ productId })
+        .then((rows) => {
+          if (cancelled) return;
+          const promisedNext = new Map();
+          const reservedNext = new Map();
+          // Aggregate promises where this POS branch is the destination,
+          // summing by source location so callers see how much each
+          // source has reserved for us for this product.
+          if (defaultLocationId != null) {
+            for (const row of Array.isArray(rows) ? rows : []) {
+              const toLoc = toPositiveInt(row.to_location_id);
+              if (toLoc !== defaultLocationId) continue;
+              const fromLoc = toPositiveInt(row.from_location_id);
+              if (fromLoc == null) continue;
+              const promisedQ = Number(row.promised_quantity);
+              const reservedQ = Number(row.reserved_quantity);
+              const availablePromisedQ = Math.max(
+                0,
+                (Number.isFinite(promisedQ) ? promisedQ : 0) -
+                  (Number.isFinite(reservedQ) ? reservedQ : 0)
+              );
+              if (availablePromisedQ > 0) {
+                promisedNext.set(
+                  fromLoc,
+                  (promisedNext.get(fromLoc) || 0) + availablePromisedQ
+                );
+              }
+              if (Number.isFinite(reservedQ) && reservedQ > 0) {
+                reservedNext.set(fromLoc, (reservedNext.get(fromLoc) || 0) + reservedQ);
+              }
+            }
+          }
+          setPickProductPromisedByLoc(promisedNext);
+          setPickProductReservedByLoc(reservedNext);
+          setPickProductPromisesStatus("ready");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setPickProductPromisedByLoc(new Map());
+          setPickProductReservedByLoc(new Map());
+          setPickProductPromisesStatus("error");
+        });
+      await Promise.all([stockPromise, promisesPromise]);
     })();
     return () => {
       cancelled = true;
     };
-  }, [pickProduct]);
+  }, [pickProduct, defaultLocationId]);
 
   const missingCheckoutItems = useMemo(() => {
     const missing = [];
@@ -983,18 +1119,42 @@ export function PosPage() {
   function addToCart(product) {
     setLastReceipt(null);
     const key = cartKey(product.id, null, false);
+    const productId = toPositiveInt(product.id);
+    const availableQty =
+      productId == null ? 0 : Number(saleLocationStockByProductId.get(productId) ?? 0);
+    const promisedQty =
+      productId == null ? 0 : Number(saleLocationPromisedByProductId.get(productId) ?? 0);
+    const limit = Math.max(
+      0,
+      (Number.isFinite(availableQty) ? availableQty : 0) + (Number.isFinite(promisedQty) ? promisedQty : 0)
+    );
+    if (hasActiveDefaultLocation && Number.isFinite(limit) && limit <= 0) {
+      setError(`No stock available for ${product.name}.`);
+      return;
+    }
     setCart((prev) => {
       const next = new Map(prev);
       const existing = next.get(key);
       const unitPrice = Number(product.unit_price);
       const vatPercentage = normalizedVatPercentage(product.vat_percentage);
+      const nextQty = (existing?.quantity || 0) + 1;
+      if (hasActiveDefaultLocation && Number.isFinite(limit) && nextQty > limit) {
+        setError(
+          `${product.name}: quantity cannot exceed available + promised (${formatOnHandQty(limit)}).`
+        );
+        return prev;
+      }
       if (existing) {
+        const nextQty = existing.quantity + 1;
+        const nextPromisedLocationLabel = promisedLocationLabelForLine(product.id, nextQty);
         next.set(key, {
           ...existing,
           vat_percentage: vatPercentage,
-          quantity: existing.quantity + 1,
+          quantity: nextQty,
+          promised_location_label: nextPromisedLocationLabel,
         });
       } else {
+        const nextPromisedLocationLabel = promisedLocationLabelForLine(product.id, 1);
         next.set(key, {
           cart_key: key,
           product_id: product.id,
@@ -1003,6 +1163,7 @@ export function PosPage() {
           unit_price: unitPrice,
           vat_percentage: vatPercentage,
           quantity: 1,
+          promised_location_label: nextPromisedLocationLabel,
         });
       }
       return next;
@@ -1067,6 +1228,15 @@ export function PosPage() {
       setError("Select a store for this product.");
       return;
     }
+    if (pickProductPromisesStatus !== "ready") {
+      setError("Wait for promised quantities to load before adding from another store.");
+      return;
+    }
+    const promisedHere = Number(pickProductPromisedByLoc.get(loc));
+    if (!Number.isFinite(promisedHere) || promisedHere <= 0) {
+      setError("That store has no stock promised to this POS branch for this product.");
+      return;
+    }
     setError("");
     addToCartAtLocation(pickProduct, loc);
     setPickProduct(null);
@@ -1086,7 +1256,34 @@ export function PosPage() {
       const next = new Map(prev);
       const line = next.get(lineKey);
       if (!line) return prev;
-      next.set(lineKey, { ...line, quantity: n });
+      if (!multiStore && hasActiveDefaultLocation) {
+        const pid = toPositiveInt(line.product_id);
+        const availableQty =
+          pid == null ? 0 : Number(saleLocationStockByProductId.get(pid) ?? 0);
+        const promisedQty =
+          pid == null ? 0 : Number(saleLocationPromisedByProductId.get(pid) ?? 0);
+        const limit = Math.max(
+          0,
+          (Number.isFinite(availableQty) ? availableQty : 0) +
+            (Number.isFinite(promisedQty) ? promisedQty : 0)
+        );
+        if (Number.isFinite(limit) && n > limit) {
+          setError(
+            `${line.name}: quantity cannot exceed available + promised (${formatOnHandQty(limit)}).`
+          );
+          next.set(lineKey, {
+            ...line,
+            quantity: limit,
+            promised_location_label: promisedLocationLabelForLine(line.product_id, limit),
+          });
+          return next;
+        }
+      }
+      next.set(lineKey, {
+        ...line,
+        quantity: n,
+        promised_location_label: promisedLocationLabelForLine(line.product_id, n),
+      });
       return next;
     });
   }
@@ -1640,6 +1837,11 @@ export function PosPage() {
                             Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
                           </span>
                         ) : null}
+                        {hasActiveDefaultLocation ? (
+                          <span className="pos-product-stock" title="Promised quantity to this location">
+                            Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
+                          </span>
+                        ) : null}
                         <span className="pos-product-meta">
                           <code>{p.code}</code>
                           <span className="pos-product-price">{money(p.unit_price)}</span>
@@ -1675,6 +1877,11 @@ export function PosPage() {
                       }
                     >
                       Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
+                    </span>
+                  ) : null}
+                  {hasActiveDefaultLocation ? (
+                    <span className="pos-product-stock" title="Promised quantity to this location">
+                      Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
                     </span>
                   ) : null}
                   <span className="pos-product-meta">
@@ -1808,10 +2015,13 @@ export function PosPage() {
                       <div className="pos-line-name">{line.name}</div>
                       <div className="pos-line-sub">
                         <code>{line.code}</code> × {money(line.unit_price)}
-                        {multiStore && line.location_label ? (
+                        {(multiStore && line.location_label) || (!multiStore && line.promised_location_label) ? (
                           <>
                             {" "}
-                            · <span className="pos-line-store">{line.location_label}</span>
+                            ·{" "}
+                            <span className="pos-line-store">
+                              {multiStore ? line.location_label : line.promised_location_label}
+                            </span>
                           </>
                         ) : null}
                       </div>
@@ -1822,6 +2032,15 @@ export function PosPage() {
                         type="number"
                         min="1"
                         step="1"
+                        max={
+                          !multiStore && hasActiveDefaultLocation
+                            ? Math.max(
+                                0,
+                                Number(saleLocationStockByProductId.get(Number(line.product_id)) ?? 0) +
+                                  Number(saleLocationPromisedByProductId.get(Number(line.product_id)) ?? 0)
+                              )
+                            : undefined
+                        }
                         value={line.quantity}
                         onChange={(e) => setLineQuantity(line.cart_key, e.target.value)}
                         aria-label={`Quantity for ${line.name}`}
@@ -1945,11 +2164,18 @@ export function PosPage() {
         {pickProduct ? (
           <div className="form-grid">
             <p className="muted" style={{ margin: 0 }}>
-              Choose which store this product is picked from.
+              Choose which store this product is picked from. You can only add
+              from stores that have promised stock to this POS branch.
             </p>
             <p style={{ margin: 0 }}>
               <strong>{pickProduct.name}</strong> <code>{pickProduct.code}</code>
             </p>
+            {defaultLocationId == null ? (
+              <p className="alert alert-error" style={{ margin: 0 }}>
+                This POS branch is not configured, so no promises can be matched.
+                Configure an active default branch on the server (D365_BRANCH_ID).
+              </p>
+            ) : null}
             <label className="field">
               <span className="field-label">Store</span>
               <select
@@ -1960,18 +2186,47 @@ export function PosPage() {
                 <option value="">— Select —</option>
                 {locations.map((l) => {
                   const locLabel = l.name || l.code || `Location #${l.id}`;
-                  let qtyBracket;
+                  const lid = Number(l.id);
+                  let totalText;
                   if (pickProductStockStatus === "loading") {
-                    qtyBracket = "(…)";
+                    totalText = "…";
                   } else if (pickProductStockStatus === "error") {
-                    qtyBracket = "(—)";
+                    totalText = "—";
                   } else {
-                    const q = pickProductStockByLoc.get(Number(l.id)) ?? 0;
-                    qtyBracket = `(${formatOnHandQty(q)})`;
+                    totalText = formatOnHandQty(
+                      pickProductStockByLoc.get(lid) ?? 0
+                    );
                   }
+                  let promisedText;
+                  let promisedQty = 0;
+                  let reservedText;
+                  if (pickProductPromisesStatus === "loading") {
+                    promisedText = "…";
+                    reservedText = "…";
+                  } else if (pickProductPromisesStatus === "error") {
+                    promisedText = "—";
+                    reservedText = "—";
+                  } else {
+                    const raw = pickProductPromisedByLoc.get(lid);
+                    promisedQty = Number.isFinite(Number(raw)) ? Number(raw) : 0;
+                    promisedText = formatOnHandQty(promisedQty);
+                    const reservedRaw = pickProductReservedByLoc.get(lid);
+                    const reservedQty = Number.isFinite(Number(reservedRaw))
+                      ? Number(reservedRaw)
+                      : 0;
+                    reservedText = formatOnHandQty(reservedQty);
+                  }
+                  const isReady =
+                    pickProductPromisesStatus === "ready" ||
+                    pickProductPromisesStatus === "error";
+                  const isDisabled = isReady && !(promisedQty > 0);
                   return (
-                    <option key={l.id} value={String(l.id)}>
-                      {locLabel} {qtyBracket}
+                    <option
+                      key={l.id}
+                      value={String(l.id)}
+                      disabled={isDisabled}
+                    >
+                      {locLabel} (Total: {totalText} · Promised: {promisedText} · Reserved: {reservedText})
                     </option>
                   );
                 })}

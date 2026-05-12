@@ -92,6 +92,89 @@ async function ensureSaleMovementTypeId(client) {
   }
 }
 
+async function getLocationProductSellabilityForUpdate(client, productId, locationId) {
+  const inv = await client.query(
+    `SELECT quantity
+     FROM inventory
+     WHERE product_id = $1 AND location_id = $2
+     FOR UPDATE`,
+    [productId, locationId]
+  );
+  const onHand = inv.rows[0]?.quantity != null ? Number(inv.rows[0].quantity) : 0;
+
+  const incoming = await client.query(
+    `SELECT COALESCE(promised_quantity, 0)::numeric AS promised_quantity,
+            COALESCE(reserved_quantity, 0)::numeric AS reserved_quantity
+     FROM inventory_promise
+     WHERE product_id = $1
+       AND to_location_id = $2
+     FOR UPDATE`,
+    [productId, locationId]
+  );
+  const outgoing = await client.query(
+    `SELECT COALESCE(promised_quantity, 0)::numeric AS promised_quantity,
+            COALESCE(reserved_quantity, 0)::numeric AS reserved_quantity
+     FROM inventory_promise
+     WHERE product_id = $1
+       AND from_location_id = $2
+     FOR UPDATE`,
+    [productId, locationId]
+  );
+  const incomingOutstanding = incoming.rows.reduce(
+    (sum, row) => sum + Math.max(0, Number(row.promised_quantity) - Number(row.reserved_quantity)),
+    0
+  );
+  const outgoingOutstanding = outgoing.rows.reduce(
+    (sum, row) => sum + Math.max(0, Number(row.promised_quantity) - Number(row.reserved_quantity)),
+    0
+  );
+  const sellable = onHand + incomingOutstanding - outgoingOutstanding;
+  return {
+    onHand,
+    incomingOutstanding,
+    outgoingOutstanding,
+    sellable,
+  };
+}
+
+async function reserveIncomingPromisesForSale(client, productId, toLocationId, amountNeeded) {
+  let remaining = Number(amountNeeded);
+  if (!Number.isFinite(remaining) || remaining <= 0) return;
+
+  const { rows } = await client.query(
+    `SELECT id,
+            COALESCE(promised_quantity, 0)::numeric AS promised_quantity,
+            COALESCE(reserved_quantity, 0)::numeric AS reserved_quantity
+     FROM inventory_promise
+     WHERE product_id = $1
+       AND to_location_id = $2
+       AND GREATEST(COALESCE(promised_quantity, 0) - COALESCE(reserved_quantity, 0), 0) > 0
+     ORDER BY created_at ASC, id ASC
+     FOR UPDATE`,
+    [productId, toLocationId]
+  );
+
+  for (const row of rows) {
+    if (remaining <= 0) break;
+    const promised = Number(row.promised_quantity);
+    const reserved = Number(row.reserved_quantity);
+    const available = Math.max(0, promised - reserved);
+    if (available <= 0) continue;
+    const consume = Math.min(available, remaining);
+    await client.query(
+      `UPDATE inventory_promise
+       SET reserved_quantity = COALESCE(reserved_quantity, 0) + $1
+       WHERE id = $2`,
+      [consume, Number(row.id)]
+    );
+    remaining -= consume;
+  }
+
+  if (remaining > 0) {
+    throw new Error("Insufficient promised stock to reserve for sale");
+  }
+}
+
 function moneyToCents(n) {
   return Math.round(Number(n) * 100);
 }
@@ -938,6 +1021,54 @@ router.post("/checkout", async (req, res) => {
       }
     }
 
+    const requestedQtyByProductLocation = new Map();
+    for (const L of pricedLines) {
+      const key = `${L.productId}::${L.locationId}`;
+      requestedQtyByProductLocation.set(
+        key,
+        (requestedQtyByProductLocation.get(key) || 0) + Number(L.qty)
+      );
+    }
+    const promisedQtyConsumedByProductLocation = new Map();
+    for (const [key, requestedQty] of requestedQtyByProductLocation.entries()) {
+      const [productIdText, locationIdText] = key.split("::");
+      const productId = Number(productIdText);
+      const locationId = Number(locationIdText);
+      const sellability = await getLocationProductSellabilityForUpdate(
+        client,
+        productId,
+        locationId
+      );
+      if (requestedQty > sellability.sellable) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "Not enough sellable quantity for one or more items at this location.",
+          detail: {
+            product_id: productId,
+            location_id: locationId,
+            requested_quantity: requestedQty,
+            sellable_quantity: sellability.sellable,
+            on_hand_quantity: sellability.onHand,
+            incoming_promised_quantity: sellability.incomingOutstanding,
+            outgoing_promised_quantity: sellability.outgoingOutstanding,
+          },
+        });
+      }
+      const neededFromIncomingPromises = Math.max(
+        0,
+        requestedQty + sellability.outgoingOutstanding - sellability.onHand
+      );
+      if (neededFromIncomingPromises > 0) {
+        await reserveIncomingPromisesForSale(
+          client,
+          productId,
+          locationId,
+          neededFromIncomingPromises
+        );
+      }
+      promisedQtyConsumedByProductLocation.set(key, neededFromIncomingPromises);
+    }
+
     const terminal = await resolveActiveTerminalForPos(client, resolvedDefaultLocationId);
     if (!terminal) {
       return res.status(400).json({
@@ -1058,7 +1189,23 @@ router.post("/checkout", async (req, res) => {
           ? distinctPaymentReferences[0]
           : null;
 
-    const saleMovementTypeId = await ensureSaleMovementTypeId(client);
+    const remainingPromisedQtyByProductLocation = new Map(promisedQtyConsumedByProductLocation);
+    const totalOnHandQtySold = pricedLines.reduce((sum, line) => {
+      const key = `${line.productId}::${line.locationId}`;
+      const promisedRemaining = Number(remainingPromisedQtyByProductLocation.get(key) || 0);
+      const promisedForLine = Math.min(promisedRemaining, Number(line.qty));
+      remainingPromisedQtyByProductLocation.set(
+        key,
+        Math.max(0, promisedRemaining - promisedForLine)
+      );
+      return sum + Math.max(0, Number(line.qty) - promisedForLine);
+    }, 0);
+    const saleMovementTypeId =
+      totalOnHandQtySold > 0 ? await ensureSaleMovementTypeId(client) : null;
+    remainingPromisedQtyByProductLocation.clear();
+    for (const [key, qty] of promisedQtyConsumedByProductLocation.entries()) {
+      remainingPromisedQtyByProductLocation.set(key, Number(qty) || 0);
+    }
 
     for (const [locId, groupLines] of byLocation) {
       const invoiceSubTotal = roundMoney(groupLines.reduce((s, L) => s + L.lineSubTotal, 0));
@@ -1110,6 +1257,19 @@ router.post("/checkout", async (req, res) => {
         const savedItem = itemRows[0];
         savedItems.push(savedItem);
 
+        const key = `${L.productId}::${locId}`;
+        const promisedRemaining = Number(remainingPromisedQtyByProductLocation.get(key) || 0);
+        const promisedQtyForLine = Math.min(promisedRemaining, Number(L.qty));
+        const qtyFromOnHand = Math.max(0, Number(L.qty) - promisedQtyForLine);
+        remainingPromisedQtyByProductLocation.set(
+          key,
+          Math.max(0, promisedRemaining - promisedQtyForLine)
+        );
+
+        if (qtyFromOnHand <= 0) {
+          continue;
+        }
+
         const { rows: stockedRows } = await client.query(
           `SELECT id FROM inventory
            WHERE product_id = $1 AND location_id = $2
@@ -1118,7 +1278,7 @@ router.post("/checkout", async (req, res) => {
         );
         if (stockedRows.length > 0) {
           const invId = Number(stockedRows[0].id);
-          const saleQty = -Math.abs(Number(L.qty));
+          const saleQty = -Math.abs(Number(qtyFromOnHand));
           await client.query(
             `INSERT INTO inventory_movement (
                product_id, location_id, quantity, unit_cost, movement_type_id,
