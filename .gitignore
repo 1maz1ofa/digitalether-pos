@@ -36,3 +36,44 @@ Thumbs.db
 # Coverage & tests
 # =====================
 coverage/
+
+# =====================
+# Logs & local output
+# =====================
+*.log
+logs/
+
+# =====================
+# Secrets & credentials (never commit)
+# =====================
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.keystore
+
+# =====================
+# Tool / editor caches & temp files
+# =====================
+.eslintcache
+.stylelintcache
+*~
+*.swp
+*.swo
+
+# =====================
+# Extra env files (root + server)
+# =====================
+.env.development.local
+.env.test.local
+.env.production.local
+server/.env.local
+server/.env.development.local
+server/.env.test.local
+server/.env.production.local
+
+# =====================
+# OS (Windows)
+# =====================
+Desktop.ini
