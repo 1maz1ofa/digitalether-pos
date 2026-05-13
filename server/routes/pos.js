@@ -146,10 +146,12 @@ async function getLocationProductSellabilityForUpdate(client, productId, locatio
 
 async function reserveIncomingPromisesForSale(client, productId, toLocationId, amountNeeded) {
   let remaining = Number(amountNeeded);
-  if (!Number.isFinite(remaining) || remaining <= 0) return;
+  const allocations = [];
+  if (!Number.isFinite(remaining) || remaining <= 0) return allocations;
 
   const { rows } = await client.query(
     `SELECT id,
+            from_location_id,
             COALESCE(promised_quantity, 0)::numeric AS promised_quantity,
             COALESCE(reserved_quantity, 0)::numeric AS reserved_quantity
      FROM inventory_promise
@@ -167,6 +169,10 @@ async function reserveIncomingPromisesForSale(client, productId, toLocationId, a
     const available = Math.max(0, promised);
     if (available <= 0) continue;
     const consume = Math.min(available, remaining);
+    const fromLoc = Number(row.from_location_id);
+    if (!Number.isInteger(fromLoc) || fromLoc <= 0) {
+      throw new Error("inventory_promise is missing from_location_id");
+    }
     await client.query(
       `UPDATE inventory_promise
        SET promised_quantity = GREATEST(COALESCE(promised_quantity, 0) - $1, 0),
@@ -174,12 +180,51 @@ async function reserveIncomingPromisesForSale(client, productId, toLocationId, a
        WHERE id = $2`,
       [consume, Number(row.id)]
     );
+    allocations.push({
+      promiseId: Number(row.id),
+      quantity: consume,
+      fromLocationId: fromLoc,
+    });
     remaining -= consume;
   }
 
   if (remaining > 0) {
     throw new Error("Insufficient promised stock to reserve for sale");
   }
+  return allocations;
+}
+
+function cloneReserveAllocationQueue(chunks) {
+  return chunks.map((c) => ({
+    promiseId: c.promiseId,
+    quantity: Number(c.quantity),
+    fromLocationId: Number(c.fromLocationId),
+  }));
+}
+
+/** FIFO slice from a mutable queue built at checkout (matches promise consumption order). */
+function takePromisedFromPendingQueue(queue, amount) {
+  const slices = [];
+  let left = Number(amount);
+  if (!Number.isFinite(left) || left <= 0 || !Array.isArray(queue)) return slices;
+  while (left > 1e-9 && queue.length) {
+    const head = queue[0];
+    const headQty = Number(head.quantity);
+    if (!Number.isFinite(headQty) || headQty <= 0) {
+      queue.shift();
+      continue;
+    }
+    const use = Math.min(headQty, left);
+    slices.push({
+      promiseId: head.promiseId,
+      quantity: use,
+      fromLocationId: Number(head.fromLocationId),
+    });
+    head.quantity = headQty - use;
+    left -= use;
+    if (head.quantity <= 1e-9) queue.shift();
+  }
+  return slices;
 }
 
 function moneyToCents(n) {
@@ -997,6 +1042,7 @@ router.post("/checkout", async (req, res) => {
       );
     }
     const promisedQtyConsumedByProductLocation = new Map();
+    const pendingReserveByKey = new Map();
     for (const [key, requestedQty] of requestedQtyByProductLocation.entries()) {
       const [productIdText, locationIdText] = key.split("::");
       const productId = Number(productIdText);
@@ -1026,12 +1072,13 @@ router.post("/checkout", async (req, res) => {
         requestedQty + sellability.outgoingOutstanding - sellability.onHand
       );
       if (neededFromIncomingPromises > 0) {
-        await reserveIncomingPromisesForSale(
+        const chunks = await reserveIncomingPromisesForSale(
           client,
           productId,
           locationId,
           neededFromIncomingPromises
         );
+        pendingReserveByKey.set(key, cloneReserveAllocationQueue(chunks));
       }
       promisedQtyConsumedByProductLocation.set(key, neededFromIncomingPromises);
     }
@@ -1222,6 +1269,7 @@ router.post("/checkout", async (req, res) => {
       const invoice = invRows[0];
 
       const savedItems = [];
+      const reserveRowsForInvoice = [];
       for (const L of groupLines) {
         const { rows: itemRows } = await client.query(
           `INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price, subtotal, vat, total)
@@ -1240,6 +1288,38 @@ router.post("/checkout", async (req, res) => {
           key,
           Math.max(0, promisedRemaining - promisedQtyForLine)
         );
+
+        if (promisedQtyForLine > 0) {
+          const queue = pendingReserveByKey.get(key);
+          if (!queue || !queue.length) {
+            await client.query("ROLLBACK");
+            return res.status(500).json({
+              error: "Internal error: missing reserve allocation for promised sale quantity.",
+            });
+          }
+          const slices = takePromisedFromPendingQueue(queue, promisedQtyForLine);
+          const sliceSum = slices.reduce((s, x) => s + Number(x.quantity), 0);
+          if (Math.abs(sliceSum - promisedQtyForLine) > 1e-6) {
+            await client.query("ROLLBACK");
+            return res.status(500).json({
+              error: "Internal error: reserve allocation does not match invoice line.",
+            });
+          }
+          const uc = L.unitCost;
+          for (const s of slices) {
+            const qn = Number(s.quantity);
+            const tc =
+              uc != null && Number.isFinite(uc) ? roundMoney(qn * uc) : roundMoney(0);
+            reserveRowsForInvoice.push({
+              productId: L.productId,
+              promiseId: s.promiseId,
+              fromLocationId: s.fromLocationId,
+              quantity: qn,
+              unitCost: uc,
+              totalCost: tc,
+            });
+          }
+        }
 
         if (qtyFromOnHand <= 0) {
           continue;
@@ -1277,6 +1357,57 @@ router.post("/checkout", async (req, res) => {
              WHERE id = $2`,
             [saleQty, invId]
           );
+        }
+      }
+      if (reserveRowsForInvoice.length) {
+        const byShipFrom = new Map();
+        for (const r of reserveRowsForInvoice) {
+          const sid = Number(r.fromLocationId);
+          if (!Number.isInteger(sid) || sid <= 0) {
+            await client.query("ROLLBACK");
+            return res.status(500).json({
+              error: "Internal error: reserve row missing ship-from location for a promise.",
+            });
+          }
+          if (!byShipFrom.has(sid)) byShipFrom.set(sid, []);
+          byShipFrom.get(sid).push(r);
+        }
+        const distinctPromiseIdsAll = [];
+        for (const rows of byShipFrom.values()) {
+          const distinctProducts = new Set(rows.map((x) => x.productId)).size;
+          const { rows: rhRows } = await client.query(
+            `INSERT INTO reserve_issue_header (location_id, total_products, invoice_number)
+             VALUES ($1, $2, $3)
+             RETURNING id`,
+            [locId, distinctProducts, invoice.invoice_number]
+          );
+          const reserveHeaderId = Number(rhRows[0].id);
+          for (const r of rows) {
+            await client.query(
+              `INSERT INTO reserve_issue_items (header_id, product_id, promise_id, quantity, unit_cost, total_cost)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [reserveHeaderId, r.productId, r.promiseId, r.quantity, r.unitCost, r.totalCost]
+            );
+          }
+          for (const r of rows) {
+            const pid = Number(r.promiseId);
+            if (Number.isInteger(pid) && pid > 0) distinctPromiseIdsAll.push(pid);
+          }
+        }
+        const distinctPromiseIds = [...new Set(distinctPromiseIdsAll)];
+        if (distinctPromiseIds.length > 0) {
+          const invLabel =
+            invoice.invoice_number != null
+              ? String(invoice.invoice_number).trim().slice(0, 100)
+              : null;
+          if (invLabel) {
+            await client.query(
+              `UPDATE inventory_promise
+               SET invoice_number = $1
+               WHERE id = ANY($2::int[])`,
+              [invLabel, distinctPromiseIds]
+            );
+          }
         }
       }
       if (paymentPool.length > 0) {

@@ -38,6 +38,8 @@ router.get("/", async (req, res) => {
               ip.to_location_id,
               ip.promised_quantity,
               ip.reserved_quantity,
+              ip.invoice_number,
+              ip.issue_number,
               ip.created_at,
               p.code AS product_code,
               p.name AS product_name,
@@ -147,7 +149,7 @@ router.post("/", async (req, res) => {
     const insert = await client.query(
       `INSERT INTO inventory_promise (product_id, from_location_id, to_location_id, promised_quantity)
        VALUES ($1, $2, $3, $4)
-       RETURNING id, product_id, from_location_id, to_location_id, promised_quantity, reserved_quantity, created_at`,
+       RETURNING id, product_id, from_location_id, to_location_id, promised_quantity, reserved_quantity, invoice_number, issue_number, created_at`,
       [productId, fromLocationId, toLocationId, promisedQty]
     );
 

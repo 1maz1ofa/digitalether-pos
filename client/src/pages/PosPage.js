@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import {
   createClientCheckoutProfiler,
@@ -81,6 +81,13 @@ function money(v) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+/** Elapsed ms while posting checkout — shown live in the UI. */
+function formatCheckoutElapsed(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return "0.0s";
+  return `${(n / 1000).toFixed(1)}s`;
 }
 
 /** Match server inventory display: whole numbers as integers, else up to 4 decimals. */
@@ -402,6 +409,8 @@ export function PosPage() {
   const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
   const [cart, setCart] = useState(() => new Map());
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutElapsedMs, setCheckoutElapsedMs] = useState(0);
+  const checkoutTimerStartRef = useRef(null);
   const [missingCheckoutInfoOpen, setMissingCheckoutInfoOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
   const [pickProduct, setPickProduct] = useState(null);
@@ -463,6 +472,24 @@ export function PosPage() {
     () => d365Records.filter((row) => d365CreditRecordMatchesQuery(row, d365CreditSearch)),
     [d365Records, d365CreditSearch]
   );
+
+  useEffect(() => {
+    if (!checkoutLoading) {
+      checkoutTimerStartRef.current = null;
+      return;
+    }
+    checkoutTimerStartRef.current = performance.now();
+    setCheckoutElapsedMs(0);
+    const id = window.setInterval(() => {
+      const t0 = checkoutTimerStartRef.current;
+      if (t0 != null) {
+        setCheckoutElapsedMs(Math.round(performance.now() - t0));
+      }
+    }, 100);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [checkoutLoading]);
 
   const load = useCallback(async () => {
     setError("");
@@ -2287,7 +2314,14 @@ export function PosPage() {
                         : undefined
                     }
                   >
-                    {checkoutLoading ? "Processing…" : "Complete sale"}
+                    {checkoutLoading ? (
+                      <>
+                        Processing…{" "}
+                        <span className="pos-checkout-timer">{formatCheckoutElapsed(checkoutElapsedMs)}</span>
+                      </>
+                    ) : (
+                      "Complete sale"
+                    )}
                   </button>
                 </span>
               </div>
@@ -2521,7 +2555,14 @@ export function PosPage() {
               disabled={checkoutLoading || htbInstallmentOutOfRange}
               onClick={submitPaymentAndCheckout}
             >
-              {checkoutLoading ? "Processing…" : "Confirm payment"}
+              {checkoutLoading ? (
+                <>
+                  Processing…{" "}
+                  <span className="pos-checkout-timer">{formatCheckoutElapsed(checkoutElapsedMs)}</span>
+                </>
+              ) : (
+                "Confirm payment"
+              )}
             </button>
           </>
         }
@@ -2530,6 +2571,14 @@ export function PosPage() {
           {paymentError ? (
             <div className="alert alert-error" role="alert">
               {paymentError}
+            </div>
+          ) : null}
+          {checkoutLoading ? (
+            <div className="pos-checkout-posting-bar" role="status" aria-live="polite">
+              <span className="pos-checkout-posting-label">Posting sale</span>
+              <span className="pos-checkout-timer" aria-label="Elapsed time posting sale">
+                {formatCheckoutElapsed(checkoutElapsedMs)}
+              </span>
             </div>
           ) : null}
           <p className="muted pos-payment-modal-intro" style={{ margin: 0 }}>

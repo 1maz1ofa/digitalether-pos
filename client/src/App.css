@@ -825,6 +825,28 @@ code {
   gap: 1.1rem;
 }
 
+.pos-checkout-posting-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--nav-active-bg, rgba(0, 0, 0, 0.04));
+  font-size: 0.95rem;
+}
+
+.pos-checkout-posting-label {
+  font-weight: 600;
+}
+
+.pos-checkout-timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .pos-payment-modal-intro {
   font-size: 0.95rem;
 }

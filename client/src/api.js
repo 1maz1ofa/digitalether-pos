@@ -246,5 +246,37 @@ export const api = {
           body: JSON.stringify(data),
         }),
     },
+    reserveIssues: {
+      listPending: () => apiRequest("/api/inventory/reserve-issues"),
+      getByHeaderId: (headerId) => {
+        const params = new URLSearchParams();
+        params.set("header_id", String(headerId).trim());
+        return apiRequest(`/api/inventory/reserve-issues?${params.toString()}`);
+      },
+      getByInvoice: (invoiceNumber) => {
+        const inv = String(invoiceNumber || "").trim();
+        const params = new URLSearchParams();
+        params.set("invoice_number", inv);
+        return apiRequest(`/api/inventory/reserve-issues?${params.toString()}`);
+      },
+      issue: ({ header_id: headerId, invoice_number: invoiceNumber } = {}) => {
+        const body = {};
+        const hid =
+          headerId !== null &&
+          headerId !== undefined &&
+          String(headerId).trim() !== ""
+            ? parseInt(String(headerId).trim(), 10)
+            : null;
+        if (hid !== null && Number.isInteger(hid) && hid > 0) {
+          body.header_id = hid;
+        }
+        const inv = String(invoiceNumber || "").trim();
+        if (inv) body.invoice_number = inv;
+        return apiRequest("/api/inventory/reserve-issues/issue", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      },
+    },
   },
 };

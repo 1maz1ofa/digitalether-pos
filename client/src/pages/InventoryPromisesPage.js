@@ -333,12 +333,14 @@ export function InventoryPromisesPage() {
                   <th>To location</th>
                   <th>Promised quantity</th>
                   <th>Reserved quantity</th>
+                  <th>Invoice #</th>
+                  <th>Issue #</th>
                 </tr>
               </thead>
               <tbody>
                 {promises.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="muted">
+                    <td colSpan={8} className="muted">
                       No promises yet. Use &quot;New promise&quot; to reserve stock
                       for another store.
                     </td>
@@ -355,6 +357,16 @@ export function InventoryPromisesPage() {
                       <td>{toLocationCell(row)}</td>
                       <td>{qtyFmt(row.promised_quantity)}</td>
                       <td>{qtyFmt(row.reserved_quantity)}</td>
+                      <td>
+                        {row.invoice_number != null && row.invoice_number !== ""
+                          ? String(row.invoice_number)
+                          : "—"}
+                      </td>
+                      <td>
+                        {row.issue_number != null && row.issue_number !== ""
+                          ? String(row.issue_number)
+                          : "—"}
+                      </td>
                     </tr>
                   ))
                 )}

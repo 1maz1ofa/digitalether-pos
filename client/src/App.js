@@ -6,6 +6,7 @@ import { CustomersPage } from "./pages/CustomersPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { InventoryProductLocationsPage } from "./pages/InventoryProductLocationsPage";
 import { InventoryPromisesPage } from "./pages/InventoryPromisesPage";
+import { ReserveIssuePage } from "./pages/ReserveIssuePage";
 import { InvoicesPage } from "./pages/InvoicesPage";
 import { MovementNewPage } from "./pages/MovementNewPage";
 import { MovementPage } from "./pages/MovementPage";
@@ -34,6 +35,7 @@ function App() {
           <Route path="inventory" element={<InventoryPage />} />
           <Route path="inventory/product/:productId" element={<InventoryProductLocationsPage />} />
           <Route path="promises" element={<InventoryPromisesPage />} />
+          <Route path="reserve-issue" element={<ReserveIssuePage />} />
           <Route path="movement-types" element={<MovementTypesPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="invoices" element={<InvoicesPage />} />
