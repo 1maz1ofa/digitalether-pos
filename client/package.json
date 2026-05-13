@@ -8,7 +8,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
-    "digitalether-template": "file:..",
+    "digitalether-pos": "file:..",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^6.30.3",
