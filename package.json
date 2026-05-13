@@ -2,10 +2,12 @@
   "name": "digitalether-template",
   "version": "1.0.0",
   "description": "DigitalEther full-stack template (React + Node.js)",
-  "main": "sitemapper.js",
+  "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix server\" \"npm start --prefix client\"",
-    "start": "npm run dev",
+    "start": "node server/index.js",
+    "prebuild": "npm install --prefix server && npm install --prefix client",
+    "build": "npm run build --prefix client",
     "install:all": "npm install && npm install --prefix server && npm install --prefix client",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -28,5 +30,8 @@
   "homepage": "https://github.com/1maz1ofa/digitalether-template#readme",
   "dependencies": {
     "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

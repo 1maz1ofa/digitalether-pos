@@ -1,6 +1,15 @@
+const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
+
+const serveClient =
+  process.env.NODE_ENV === "production" ||
+  Boolean(process.env.WEBSITE_SITE_NAME);
+const clientBuild = path.join(__dirname, "..", "client", "build");
+
+// Routes
 const categoriesRouter = require("./routes/categories");
 const locationsRouter = require("./routes/locations");
 const productsRouter = require("./routes/products");
@@ -17,13 +26,38 @@ const reserveIssueRouter = require("./routes/reserveIssue");
 
 const app = express();
 
-app.use(cors());
+const corsOrigins = ["http://localhost:3000", process.env.FRONTEND_URL].filter(
+  Boolean
+);
+if (process.env.WEBSITE_HOSTNAME) {
+  corsOrigins.push(`https://${process.env.WEBSITE_HOSTNAME}`);
+}
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (corsOrigins.includes(origin)) return callback(null, true);
+      callback(null, false);
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+  })
+);
+
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.json({ message: "Server is running 🚀" });
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
 });
 
+if (!serveClient) {
+  app.get("/", (req, res) => {
+    res.json({ message: "Server is running 🚀" });
+  });
+}
+
+// ✅ API routes
 app.use("/api/categories", categoriesRouter);
 app.use("/api/locations", locationsRouter);
 app.use("/api/products", productsRouter);
@@ -55,8 +89,20 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
-const PORT = 5000;
+if (serveClient && fs.existsSync(clientBuild)) {
+  app.use(express.static(clientBuild));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (req.path.startsWith("/api") || req.path === "/test-db") return next();
+    res.sendFile(path.join(clientBuild, "index.html"), (err) => {
+      if (err) next(err);
+    });
+  });
+}
+
+// ✅ IMPORTANT: Azure uses dynamic port
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });

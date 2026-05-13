@@ -1,6 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
+  "description": "Digital Ether POS API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -15,5 +16,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
