@@ -177,17 +177,14 @@ html {
   padding: 0 0.25rem;
 }
 
-.admin-brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--primary), #6366f1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 0.85rem;
-  letter-spacing: -0.02em;
+.admin-brand-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: contain;
+  flex-shrink: 0;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .admin-brand-title {
@@ -206,10 +203,9 @@ html {
   gap: 0.5rem 1rem;
 }
 
-.admin-header--pos-nav-collapsed .admin-brand-mark {
-  width: 34px;
-  height: 34px;
-  font-size: 0.78rem;
+.admin-header--pos-nav-collapsed .admin-brand-logo {
+  width: 52px;
+  height: 52px;
 }
 
 .admin-header--pos-nav-collapsed .admin-brand-title {
@@ -1207,13 +1203,21 @@ code {
   background: var(--table-header-bg);
 }
 
+.pos-d365-table tbody td {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.pos-d365-table tbody td.pos-d365-col-actions {
+  font-weight: 400;
+}
+
 .pos-d365-table tr:last-child td {
   border-bottom: none;
 }
 
 .pos-d365-date {
   white-space: nowrap;
-  color: var(--muted);
 }
 
 .pos-d365-id {

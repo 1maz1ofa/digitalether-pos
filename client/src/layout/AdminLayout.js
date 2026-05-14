@@ -158,10 +158,17 @@ export function AdminLayout() {
         className={`admin-header${navCollapsed ? " admin-header--pos-nav-collapsed" : ""}`}
       >
         <div className="admin-brand">
-          <span className="admin-brand-mark">DE</span>
+          <img
+            className="admin-brand-logo"
+            src={`${process.env.PUBLIC_URL || ""}/tv-sales-home-logo.png`}
+            alt="TV Sales & Home"
+            width={64}
+            height={64}
+            decoding="async"
+          />
           <div>
-            <div className="admin-brand-title">DigitalEther</div>
-            <div className="admin-brand-sub">Point of Sale</div>
+            <div className="admin-brand-title">TV Sales &amp; Home</div>
+            <div className="admin-brand-sub">Powered By Digital Ether</div>
           </div>
         </div>
         <div className="admin-header-right">
