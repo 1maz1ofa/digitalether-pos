@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { useTheme } from "../context/ThemeContext";
+import { COLOR_THEME_OPTIONS, useTheme } from "../context/ThemeContext";
 
 function MenuIcon() {
   return (
@@ -44,6 +44,35 @@ const nav = [
   { to: "/vat", label: "VAT" },
 ];
 
+const CHECKOUT_COLOR_SELECT_ID = "admin-checkout-color-theme";
+
+function CheckoutColorThemeFields({ colorTheme, setColorTheme }) {
+  return (
+    <>
+      <label
+        className="color-theme-menu-label"
+        htmlFor={CHECKOUT_COLOR_SELECT_ID}
+      >
+        Checkout colors
+      </label>
+      <select
+        id={CHECKOUT_COLOR_SELECT_ID}
+        className="input color-theme-menu-select"
+        value={colorTheme}
+        onChange={(e) => setColorTheme(e.target.value)}
+        aria-label="Checkout color theme"
+        title="Colors for the sale type bar and Complete sale button on the POS screen"
+      >
+        {COLOR_THEME_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+}
+
 function ThemeToggleButton({ theme, toggleTheme, nextLabel, ariaLabel }) {
   return (
     <button
@@ -86,7 +115,7 @@ function ThemeToggleButton({ theme, toggleTheme, nextLabel, ariaLabel }) {
 
 export function AdminLayout() {
   const location = useLocation();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, colorTheme, setColorTheme } = useTheme();
   const nextLabel = theme === "dark" ? "Light" : "Dark";
   const ariaLabel =
     theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
@@ -112,6 +141,15 @@ export function AdminLayout() {
       nextLabel={nextLabel}
       ariaLabel={ariaLabel}
     />
+  );
+
+  const colorThemeMenu = (
+    <div className="color-theme-menu">
+      <CheckoutColorThemeFields
+        colorTheme={colorTheme}
+        setColorTheme={setColorTheme}
+      />
+    </div>
   );
 
   return (
@@ -157,6 +195,7 @@ export function AdminLayout() {
                   <CloseNavIcon />
                 </button>
               ) : null}
+              {colorThemeMenu}
               {themeToggle}
             </nav>
           ) : (
@@ -171,12 +210,16 @@ export function AdminLayout() {
               >
                 <MenuIcon />
               </button>
+              <CheckoutColorThemeFields
+                colorTheme={colorTheme}
+                setColorTheme={setColorTheme}
+              />
               {themeToggle}
             </div>
           )}
         </div>
       </header>
-      <main className="admin-main">
+      <main className={isPosRoute ? "admin-main admin-main--pos" : "admin-main"}>
         <Outlet />
       </main>
     </div>

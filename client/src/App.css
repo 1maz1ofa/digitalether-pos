@@ -57,6 +57,91 @@
   --receipt-text: #1e40af;
   --code-bg: rgba(15, 23, 42, 0.06);
   color-scheme: light;
+  /* Pale tint of checkout accent; keeps contrast with --text / --muted on light UI */
+  --pos-htb-card: color-mix(in srgb, var(--pos-checkout-sale-radio) 9%, #ffffff);
+  --pos-htb-card-active: color-mix(in srgb, var(--pos-checkout-sale-radio) 16%, #ffffff);
+  --pos-htb-card-border: color-mix(in srgb, var(--pos-checkout-sale-border) 28%, var(--border));
+}
+
+/* POS checkout accent — sale type strip + Complete sale (see ThemeContext colorTheme) */
+html {
+  --pos-checkout-sale-border: #fb923c;
+  --pos-checkout-sale-shadow: rgba(251, 146, 60, 0.18);
+  --pos-checkout-sale-bg: linear-gradient(180deg, #ffedd5 0%, #fed7aa 100%);
+  --pos-checkout-sale-legend: #9a3412;
+  --pos-checkout-sale-option: #431407;
+  --pos-checkout-sale-radio: #ea580c;
+  --pos-checkout-sale-kicker: #b45309;
+  --pos-checkout-sale-badge-border: rgba(234, 88, 12, 0.55);
+  --pos-checkout-sale-badge-bg: rgba(255, 255, 255, 0.72);
+  --pos-checkout-sale-badge-text: #7c2d12;
+  --pos-checkout-pay-bg: linear-gradient(180deg, #fdba74 0%, #fb923c 100%);
+  --pos-checkout-pay-hover-bg: linear-gradient(180deg, #fed7aa 0%, #fdba74 100%);
+  --pos-checkout-pay-border: #f97316;
+  --pos-checkout-pay-hover-border: #fb923c;
+  --pos-checkout-pay-shadow: rgba(249, 115, 22, 0.28);
+  --pos-checkout-pay-color: #431407;
+  /* HTB customer panel (POS): follows checkout accent; text uses --text / --muted */
+  --pos-htb-card: color-mix(in srgb, var(--pos-checkout-sale-radio) 20%, transparent);
+  --pos-htb-card-active: color-mix(in srgb, var(--pos-checkout-sale-radio) 30%, transparent);
+  --pos-htb-card-border: color-mix(in srgb, var(--pos-checkout-sale-border) 42%, transparent);
+}
+
+[data-color-theme="dark-orange"] {
+  --pos-checkout-sale-border: #c2410c;
+  --pos-checkout-sale-shadow: rgba(154, 52, 18, 0.35);
+  --pos-checkout-sale-bg: linear-gradient(180deg, #7c2d12 0%, #431407 100%);
+  --pos-checkout-sale-legend: #fed7aa;
+  --pos-checkout-sale-option: #ffedd5;
+  --pos-checkout-sale-radio: #fb923c;
+  --pos-checkout-sale-kicker: #fdba74;
+  --pos-checkout-sale-badge-border: rgba(251, 191, 36, 0.45);
+  --pos-checkout-sale-badge-bg: rgba(0, 0, 0, 0.22);
+  --pos-checkout-sale-badge-text: #fff7ed;
+  --pos-checkout-pay-bg: linear-gradient(180deg, #ea580c 0%, #9a3412 100%);
+  --pos-checkout-pay-hover-bg: linear-gradient(180deg, #f97316 0%, #c2410c 100%);
+  --pos-checkout-pay-border: #c2410c;
+  --pos-checkout-pay-hover-border: #ea580c;
+  --pos-checkout-pay-shadow: rgba(194, 65, 12, 0.4);
+  --pos-checkout-pay-color: #fffbeb;
+}
+
+[data-color-theme="light-blue"] {
+  --pos-checkout-sale-border: #38bdf8;
+  --pos-checkout-sale-shadow: rgba(14, 165, 233, 0.2);
+  --pos-checkout-sale-bg: linear-gradient(180deg, #e0f2fe 0%, #bae6fd 100%);
+  --pos-checkout-sale-legend: #075985;
+  --pos-checkout-sale-option: #0c4a6e;
+  --pos-checkout-sale-radio: #0284c7;
+  --pos-checkout-sale-kicker: #0369a1;
+  --pos-checkout-sale-badge-border: rgba(2, 132, 199, 0.45);
+  --pos-checkout-sale-badge-bg: rgba(255, 255, 255, 0.78);
+  --pos-checkout-sale-badge-text: #0c4a6e;
+  --pos-checkout-pay-bg: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%);
+  --pos-checkout-pay-hover-bg: linear-gradient(180deg, #bae6fd 0%, #7dd3fc 100%);
+  --pos-checkout-pay-border: #0ea5e9;
+  --pos-checkout-pay-hover-border: #38bdf8;
+  --pos-checkout-pay-shadow: rgba(14, 165, 233, 0.28);
+  --pos-checkout-pay-color: #0c4a6e;
+}
+
+[data-color-theme="dark-blue"] {
+  --pos-checkout-sale-border: #1d4ed8;
+  --pos-checkout-sale-shadow: rgba(30, 64, 175, 0.35);
+  --pos-checkout-sale-bg: linear-gradient(180deg, #1e3a8a 0%, #172554 100%);
+  --pos-checkout-sale-legend: #bae6fd;
+  --pos-checkout-sale-option: #e0f2fe;
+  --pos-checkout-sale-radio: #60a5fa;
+  --pos-checkout-sale-kicker: #93c5fd;
+  --pos-checkout-sale-badge-border: rgba(147, 197, 253, 0.45);
+  --pos-checkout-sale-badge-bg: rgba(15, 23, 42, 0.35);
+  --pos-checkout-sale-badge-text: #f0f9ff;
+  --pos-checkout-pay-bg: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  --pos-checkout-pay-hover-bg: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  --pos-checkout-pay-border: #1e40af;
+  --pos-checkout-pay-hover-border: #3b82f6;
+  --pos-checkout-pay-shadow: rgba(37, 99, 235, 0.38);
+  --pos-checkout-pay-color: #f8fafc;
 }
 
 .admin-shell {
@@ -117,8 +202,22 @@
 }
 
 .admin-header--pos-nav-collapsed {
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
+  padding: 0.4rem 1rem;
+  gap: 0.5rem 1rem;
+}
+
+.admin-header--pos-nav-collapsed .admin-brand-mark {
+  width: 34px;
+  height: 34px;
+  font-size: 0.78rem;
+}
+
+.admin-header--pos-nav-collapsed .admin-brand-title {
+  font-size: 0.88rem;
+}
+
+.admin-header--pos-nav-collapsed .admin-brand-sub {
+  font-size: 0.68rem;
 }
 
 .admin-header-right {
@@ -133,14 +232,39 @@
 }
 
 .admin-header-collapsed-nav {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.35rem;
+  row-gap: 0.2rem;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.35rem;
+  justify-content: end;
+  justify-items: stretch;
   flex: 1;
   min-width: 0;
+}
+
+.admin-header-collapsed-nav .admin-nav-expand-btn {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.admin-header-collapsed-nav > .color-theme-menu-label {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: stretch;
+}
+
+.admin-header-collapsed-nav > .color-theme-menu-select {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: stretch;
+}
+
+.admin-header-collapsed-nav .theme-toggle {
+  grid-column: 3;
+  grid-row: 2;
+  margin-left: 0;
 }
 
 .admin-nav-expand-btn,
@@ -214,10 +338,39 @@
   font-weight: 500;
 }
 
+.color-theme-menu {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  margin-left: 0.35rem;
+  flex-shrink: 0;
+}
+
+.color-theme-menu-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.color-theme-menu-select {
+  min-width: 8.5rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
 .admin-main {
   flex: 1;
   min-width: 0;
   padding: 2rem 2.25rem;
+}
+
+/* POS route: reclaim vertical space for catalog + cart */
+.admin-main--pos {
+  padding: 0.85rem 1.25rem 1rem;
 }
 
 .page-header {
@@ -765,7 +918,18 @@ code {
 }
 
 .pos-page .page-header {
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+  gap: 0.5rem 0.75rem;
+}
+
+.pos-page .page h1 {
+  margin: 0 0 0.15rem;
+  font-size: 1.2rem;
+}
+
+.pos-page .page-lead {
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .pos-page-header-block {
@@ -776,17 +940,17 @@ code {
 .pos-page-header-title-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.75rem 1.25rem;
+  gap: 0.4rem 0.85rem;
 }
 
 .pos-page-header-title-row h1 {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0;
 }
 
 .pos-header-branch {
-  font-size: 1.05rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: var(--text, inherit);
   letter-spacing: 0.01em;
@@ -950,45 +1114,21 @@ code {
   padding: 0.85rem 1rem;
 }
 
-.pos-d365-credit-collapse-tab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(100% + 2rem);
-  margin: -0.85rem -1rem 0.65rem;
-  padding: 0.5rem 0.5rem;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
-  background: var(--overlay-subtle);
-  color: var(--text);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+.pos-d365-credit-list-toggle {
+  flex-shrink: 0;
+  padding: 0.35rem 0.45rem;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
 }
 
-.pos-d365-credit-collapse-tab:hover {
-  background: var(--overlay-subtle-hover);
-  color: var(--text);
-}
-
-.pos-d365-credit-collapse-tab:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.pos-d365-credit-collapse-tab-icon {
+.pos-d365-credit-list-toggle-icon {
   display: flex;
   line-height: 0;
   color: inherit;
 }
 
-.pos-d365-credit-collapse-tab-icon svg {
+.pos-d365-credit-list-toggle-icon svg {
   flex-shrink: 0;
-  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35));
-}
-
-[data-theme="light"] .pos-d365-credit-collapse-tab-icon svg {
-  filter: drop-shadow(0 1px 0 rgba(15, 23, 42, 0.14));
 }
 
 .pos-d365-credit-head {
@@ -1159,12 +1299,20 @@ code {
   margin-bottom: 1rem;
   padding: 0.65rem 0.75rem;
   border-radius: 8px;
-  border: 1px dashed var(--border);
-  background: var(--overlay-subtle, transparent);
+  border: 1px dashed var(--pos-htb-card-border);
+  background: var(--pos-htb-card);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
 }
 
 .pos-htb-selection--active {
   border-style: solid;
+  border-color: var(--pos-checkout-sale-border);
+  background: var(--pos-htb-card-active);
+  box-shadow: 0 1px 3px var(--pos-checkout-sale-shadow);
 }
 
 .pos-htb-selection-head {
@@ -1177,9 +1325,9 @@ code {
 
 .pos-htb-selection-label {
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--muted);
 }
 
@@ -1204,7 +1352,7 @@ code {
 .pos-htb-selection-name {
   margin: 0 0 0.5rem;
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .pos-htb-selection-empty {
@@ -1221,11 +1369,11 @@ code {
 
 .pos-htb-selection-meta dt {
   margin: 0;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--muted);
   font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
 }
 
 .pos-htb-selection-meta dd {
@@ -1242,32 +1390,39 @@ code {
   max-width: 100%;
   overflow-wrap: anywhere;
   font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 [data-theme="light"] .pos-htb-selection {
-  border: 1px solid #94a3b8;
-  background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  border-width: 2px;
+  box-shadow: none;
 }
 
 [data-theme="light"] .pos-htb-selection--active {
-  border-color: #2563eb;
-  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.16), 0 8px 18px rgba(37, 99, 235, 0.1);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--pos-checkout-sale-shadow) 55%, transparent),
+    0 4px 14px var(--pos-checkout-sale-shadow);
 }
 
-[data-theme="light"] .pos-htb-selection-label,
-[data-theme="light"] .pos-htb-selection-meta dt {
-  color: #334155;
-}
-
-[data-theme="light"] .pos-htb-selection-name {
-  color: #0f172a;
-}
-
-[data-theme="light"] .pos-htb-selection-meta dd,
 [data-theme="light"] .pos-htb-guid {
-  color: #1e293b;
+  background: var(--bg-elevated);
+  border-color: var(--pos-checkout-sale-border);
+  color: var(--text);
+}
+
+[data-theme="light"] .pos-htb-selection-clear.btn-ghost {
+  color: var(--pos-checkout-sale-radio);
+  font-weight: 700;
+}
+
+[data-theme="light"] .pos-htb-selection-clear.btn-ghost:hover:not(:disabled) {
+  color: var(--pos-checkout-sale-border);
+  background: color-mix(in srgb, var(--pos-checkout-sale-radio) 14%, transparent);
 }
 
 .pos-main-columns {
@@ -1797,28 +1952,72 @@ code {
 }
 
 .pos-page .pos-shell {
-  gap: 1rem;
+  gap: 0.65rem;
 }
 
 .pos-page .pos-sale-type-row {
-  padding: 0.8rem 1.15rem;
-  border-color: var(--primary-chip-border);
-  background: linear-gradient(180deg, var(--overlay-subtle) 0%, transparent 100%);
+  padding: 0.42rem 0.85rem;
+  border-color: var(--pos-checkout-sale-border);
+  background: var(--pos-checkout-sale-bg);
+  box-shadow: 0 4px 14px var(--pos-checkout-sale-shadow);
+}
+
+.pos-page .pos-sale-type-row .pos-sale-type-bar-legend {
+  color: var(--pos-checkout-sale-legend);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+
+.pos-page .pos-sale-type--bar {
+  gap: 0.35rem 0.75rem;
+  align-items: center;
 }
 
 .pos-page .pos-sale-type-option {
-  gap: 0.75rem;
-  font-size: 1.25rem;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  line-height: 1.15;
+}
+
+.pos-page .pos-sale-type-row .pos-sale-type-option {
+  color: var(--pos-checkout-sale-option);
+}
+
+.pos-page .pos-sale-type-radios {
+  gap: 0.5rem 1.25rem;
 }
 
 .pos-page .pos-sale-type-option input[type="radio"] {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.pos-page .pos-sale-type-row .pos-sale-type-option input[type="radio"] {
+  accent-color: var(--pos-checkout-sale-radio);
+}
+
+.pos-page .pos-sale-type-current {
+  gap: 0.08rem;
+}
+
+.pos-page .pos-sale-type-current-kicker {
+  font-size: 0.58rem;
 }
 
 .pos-page .pos-sale-type-current-label {
-  padding: 0.45rem 1rem;
-  font-size: 1rem;
+  padding: 0.22rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+.pos-page .pos-sale-type-row .pos-sale-type-current-kicker {
+  color: var(--pos-checkout-sale-kicker);
+}
+
+.pos-page .pos-sale-type-row .pos-sale-type-current-label {
+  border-color: var(--pos-checkout-sale-badge-border);
+  background: var(--pos-checkout-sale-badge-bg);
+  color: var(--pos-checkout-sale-badge-text);
 }
 
 .pos-page .pos-catalog {
@@ -1996,9 +2195,10 @@ code {
   font-size: 0.9rem;
 }
 
-.pos-page .pos-d365-credit-collapse-tab-icon svg {
-  width: 34px;
-  height: 34px;
+.pos-page .pos-d365-credit-list-toggle {
+  min-height: 2.45rem;
+  min-width: 2.45rem;
+  padding: 0.4rem 0.5rem;
 }
 
 .pos-page .pos-line-actions .btn-ghost {
@@ -2018,14 +2218,15 @@ code {
 .pos-page .pos-pay {
   min-height: 2.9rem;
   font-size: 1rem;
-  background: linear-gradient(180deg, #f97316 0%, #ea580c 100%);
-  border-color: #ea580c;
-  box-shadow: 0 8px 22px rgba(249, 115, 22, 0.28);
+  color: var(--pos-checkout-pay-color);
+  background: var(--pos-checkout-pay-bg);
+  border-color: var(--pos-checkout-pay-border);
+  box-shadow: 0 8px 22px var(--pos-checkout-pay-shadow);
 }
 
 .pos-page .pos-pay:hover:not(:disabled) {
-  background: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
-  border-color: #f97316;
+  background: var(--pos-checkout-pay-hover-bg);
+  border-color: var(--pos-checkout-pay-hover-border);
 }
 
 .pos-page .pos-cart-buttons .btn-secondary {

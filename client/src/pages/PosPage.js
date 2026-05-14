@@ -1758,45 +1758,6 @@ export function PosPage() {
 
         {saleType === "htb" ? (
         <section className="card pos-d365-credit" aria-labelledby="pos-d365-credit-heading">
-          {d365Records.length > 0 ? (
-            <button
-              type="button"
-              className="pos-d365-credit-collapse-tab"
-              aria-expanded={d365CreditAppsListExpanded}
-              aria-controls="pos-d365-credit-apps-panel"
-              aria-label={
-                d365CreditAppsListExpanded ? "Hide credit applications list" : "Show credit applications list"
-              }
-              title={
-                d365CreditAppsListExpanded ? "Hide credit applications list" : "Show credit applications list"
-              }
-              onClick={() => setD365CreditAppsListExpanded((v) => !v)}
-            >
-              <span className="pos-d365-credit-collapse-tab-icon" aria-hidden>
-                {d365CreditAppsListExpanded ? (
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M6 15l6-6 6 6"
-                      stroke="currentColor"
-                      strokeWidth="2.75"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M6 9l6 6 6-6"
-                      stroke="currentColor"
-                      strokeWidth="2.75"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </span>
-            </button>
-          ) : null}
           <div className="pos-d365-credit-head">
             <h2 id="pos-d365-credit-heading" className="pos-d365-credit-title">
               Credit applications
@@ -1810,6 +1771,49 @@ export function PosPage() {
               >
                 {d365Loading ? "Refreshing…" : "Refresh"}
               </button>
+              {d365Records.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary pos-d365-credit-list-toggle"
+                  aria-expanded={d365CreditAppsListExpanded}
+                  aria-controls="pos-d365-credit-apps-panel"
+                  aria-label={
+                    d365CreditAppsListExpanded
+                      ? "Hide credit applications list"
+                      : "Show credit applications list"
+                  }
+                  title={
+                    d365CreditAppsListExpanded
+                      ? "Hide credit applications list"
+                      : "Show credit applications list"
+                  }
+                  onClick={() => setD365CreditAppsListExpanded((v) => !v)}
+                >
+                  <span className="pos-d365-credit-list-toggle-icon" aria-hidden>
+                    {d365CreditAppsListExpanded ? (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M6 15l6-6 6 6"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M6 9l6 6 6-6"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </span>
+                </button>
+              ) : null}
             </div>
           </div>
           {d365Meta ? (
@@ -1842,8 +1846,8 @@ export function PosPage() {
           ) : null}
           {!d365CreditAppsListExpanded && htbCreditSelection?.creditApplicationId ? (
             <p className="muted pos-d365-collapse-hint" role="status">
-              Application list is hidden. Use the chevron at the top of this section to show the list and pick a
-              different application.
+              Application list is hidden. Use the list toggle next to Refresh to show the list and pick a different
+              application.
             </p>
           ) : null}
           {d365Records.length > 0 ? (
