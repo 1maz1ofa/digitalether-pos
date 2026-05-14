@@ -90,7 +90,7 @@ html {
 [data-color-theme="dark-orange"] {
   --pos-checkout-sale-border: #c2410c;
   --pos-checkout-sale-shadow: rgba(154, 52, 18, 0.35);
-  --pos-checkout-sale-bg: linear-gradient(180deg, #7c2d12 0%, #431407 100%);
+  --pos-checkout-sale-bg: linear-gradient(180deg, #d14f0d 0%, #a13207 100%);
   --pos-checkout-sale-legend: #fed7aa;
   --pos-checkout-sale-option: #ffedd5;
   --pos-checkout-sale-radio: #fb923c;
