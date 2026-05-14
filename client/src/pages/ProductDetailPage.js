@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, apiMediaUrl } from "../api";
 
 function money(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -109,6 +109,15 @@ export function ProductDetailPage() {
             <h2 className="card-title" style={{ marginTop: 0 }}>
               Details
             </h2>
+            {product.image_url ? (
+              <div style={{ marginBottom: "1rem" }}>
+                <img
+                  src={apiMediaUrl(product.image_url)}
+                  alt=""
+                  className="detail-product-image"
+                />
+              </div>
+            ) : null}
             <dl className="detail-dl">
               <dt>Unit price</dt>
               <dd>{money(product.unit_price)}</dd>

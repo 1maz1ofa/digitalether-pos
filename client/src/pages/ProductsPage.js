@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, apiMediaUrl } from "../api";
 import { Modal } from "../components/Modal";
 
 const emptyForm = {
@@ -15,6 +15,7 @@ const emptyForm = {
   unit_price: "",
   is_active: true,
   reorder_level: "",
+  image_url: "",
 };
 
 function money(v) {
@@ -42,6 +43,8 @@ export function ProductsPage() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [pendingImageFile, setPendingImageFile] = useState(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -66,9 +69,23 @@ export function ProductsPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (modalOpen) return;
+    setPendingImageFile(null);
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, [modalOpen]);
+
   function openCreate() {
     const defaultVat = vatRates.find((v) => v.is_default);
     setEditingId(null);
+    setPendingImageFile(null);
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     setForm({
       ...emptyForm,
       vat_id: defaultVat ? String(defaultVat.id) : "",
@@ -78,6 +95,11 @@ export function ProductsPage() {
 
   function openEdit(row) {
     setEditingId(row.id);
+    setPendingImageFile(null);
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     setForm({
       code: row.code || "",
       name: row.name || "",
@@ -90,6 +112,7 @@ export function ProductsPage() {
       unit_price: row.unit_price != null ? String(row.unit_price) : "",
       is_active: Boolean(row.is_active),
       reorder_level: row.reorder_level != null ? String(row.reorder_level) : "",
+      image_url: row.image_url || "",
     });
     setModalOpen(true);
   }
@@ -114,6 +137,7 @@ export function ProductsPage() {
       unit_price: Number.isFinite(unit_price) ? unit_price : null,
       is_active: form.is_active,
       reorder_level: Number.isInteger(reorder_level) ? reorder_level : null,
+      image_url: form.image_url === "" ? null : String(form.image_url).trim(),
     };
   }
 
@@ -125,9 +149,20 @@ export function ProductsPage() {
       const payload = buildPayload();
       if (editingId) {
         await api.products.update(editingId, payload);
+        if (pendingImageFile) {
+          await api.products.uploadImage(editingId, pendingImageFile);
+        }
       } else {
-        await api.products.create(payload);
+        const created = await api.products.create(payload);
+        if (pendingImageFile && created?.id) {
+          await api.products.uploadImage(created.id, pendingImageFile);
+        }
       }
+      setPendingImageFile(null);
+      setLocalPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
       setModalOpen(false);
       await load();
     } catch (err) {
@@ -135,6 +170,47 @@ export function ProductsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleRemoveStoredImage() {
+    if (!editingId) {
+      setLocalPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setPendingImageFile(null);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await api.products.removeImage(editingId);
+      setForm((f) => ({ ...f, image_url: "" }));
+      setLocalPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setPendingImageFile(null);
+      await load();
+    } catch (err) {
+      setError(err.message || "Could not remove image");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleImageFileChange(e) {
+    const file = e.target.files?.[0] ?? null;
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    if (!file) {
+      setPendingImageFile(null);
+      return;
+    }
+    setPendingImageFile(file);
+    setLocalPreviewUrl(URL.createObjectURL(file));
   }
 
   async function handleDelete(row) {
@@ -174,6 +250,7 @@ export function ProductsPage() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th>Image</th>
                   <th>Code</th>
                   <th>Name</th>
                   <th>Category</th>
@@ -186,13 +263,24 @@ export function ProductsPage() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="muted">
+                    <td colSpan={8} className="muted">
                       No products yet.
                     </td>
                   </tr>
                 ) : (
                   rows.map((r) => (
                     <tr key={r.id}>
+                      <td>
+                        {r.image_url ? (
+                          <img
+                            src={apiMediaUrl(r.image_url)}
+                            alt=""
+                            className="table-product-thumb"
+                          />
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                       <td>
                         <Link to={`/products/${r.id}`} className="table-link">
                           <code>{r.code}</code>
@@ -371,6 +459,40 @@ export function ProductsPage() {
             />
             <span>Active</span>
           </label>
+          <div className="field field--full">
+            <span className="field-label">Product image</span>
+            <div className="product-image-field">
+              {localPreviewUrl || apiMediaUrl(form.image_url) ? (
+                <img
+                  src={localPreviewUrl || apiMediaUrl(form.image_url)}
+                  alt=""
+                  className="product-form-thumb"
+                />
+              ) : (
+                <div className="product-form-thumb product-form-thumb--empty" aria-hidden />
+              )}
+              <div className="product-image-field-actions">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  className="input"
+                  onChange={handleImageFileChange}
+                  disabled={saving}
+                />
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  disabled={saving || (!form.image_url && !pendingImageFile)}
+                  onClick={handleRemoveStoredImage}
+                >
+                  Remove image
+                </button>
+              </div>
+            </div>
+            <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.8rem" }}>
+              JPEG, PNG, GIF, or WebP — up to 5MB. New images upload after you save the product.
+            </p>
+          </div>
         </form>
       </Modal>
     </div>

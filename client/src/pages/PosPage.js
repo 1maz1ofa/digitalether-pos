@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, apiMediaUrl } from "../api";
 import {
   createClientCheckoutProfiler,
   isCheckoutProfileEnabled,
@@ -838,32 +838,13 @@ export function PosPage() {
     });
   }, [categoryFilteredProducts, search]);
 
-  const productGroups = useMemo(() => {
-    if (categoryFilter) return null;
-    const order = [];
-    const map = new Map();
-    for (const p of filteredProducts) {
-      const key = categoryKey(p);
-      let g = map.get(key);
-      if (!g) {
-        g = { key, title: categoryLabel(p), items: [] };
-        map.set(key, g);
-        order.push(g);
-      }
-      g.items.push(p);
-    }
-    order.sort((a, b) => {
-      if (a.key === UNCATEGORIZED_KEY) return 1;
-      if (b.key === UNCATEGORIZED_KEY) return -1;
-      return (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" });
-    });
-    for (const g of order) {
-      g.items.sort((a, b) =>
+  const gridProducts = useMemo(
+    () =>
+      [...filteredProducts].sort((a, b) =>
         String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
-      );
-    }
-    return order;
-  }, [filteredProducts, categoryFilter]);
+      ),
+    [filteredProducts]
+  );
 
   const cartLines = useMemo(() => Array.from(cart.values()), [cart]);
 
@@ -1324,6 +1305,7 @@ export function PosPage() {
           product_id: product.id,
           code: product.code,
           name: product.name,
+          image_url: product.image_url || null,
           unit_price: unitPrice,
           vat_percentage: vatPercentage,
           quantity: 1,
@@ -1355,6 +1337,7 @@ export function PosPage() {
           product_id: product.id,
           code: product.code,
           name: product.name,
+          image_url: product.image_url || null,
           unit_price: unitPrice,
           vat_percentage: vatPercentage,
           quantity: 1,
@@ -2018,55 +2001,9 @@ export function PosPage() {
             <p className="muted">Loading…</p>
           ) : filteredProducts.length === 0 ? (
             <p className="muted pos-grid-empty">No matching products with a price.</p>
-          ) : productGroups ? (
-            <div className="pos-product-groups">
-              {productGroups.map((g) => (
-                <div key={g.key} className="pos-product-group">
-                  <h3 className="pos-product-group-title">{g.title}</h3>
-                  <div className="pos-product-grid pos-product-grid--section">
-                    {g.items.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className="pos-product-tile"
-                        disabled={htbNeedsCustomerSelection}
-                        onClick={() => beginAddProduct(p)}
-                      >
-                        <span className="pos-product-name">{p.name}</span>
-                        {hasActiveDefaultLocation ? (
-                          <span
-                            className={`pos-product-stock${
-                              (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
-                                ? " pos-product-stock--none"
-                                : ""
-                            }`}
-                            title={
-                              headerBranchName
-                                ? `Available quantity at ${headerBranchName}`
-                                : "Available quantity at this location"
-                            }
-                          >
-                            Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
-                          </span>
-                        ) : null}
-                        {hasActiveDefaultLocation ? (
-                          <span className="pos-product-stock" title="Promised quantity to this location">
-                            Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
-                          </span>
-                        ) : null}
-                        <span className="pos-product-meta">
-                          <code>{p.code}</code>
-                          <span className="pos-product-price">{money(p.unit_price)}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
           ) : (
             <div className="pos-product-grid">
-              {filteredProducts.map((p) => (
+              {gridProducts.map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -2074,31 +2011,47 @@ export function PosPage() {
                   disabled={htbNeedsCustomerSelection}
                   onClick={() => beginAddProduct(p)}
                 >
-                  <span className="pos-product-name">{p.name}</span>
-                  {hasActiveDefaultLocation ? (
-                    <span
-                      className={`pos-product-stock${
-                        (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
-                          ? " pos-product-stock--none"
-                          : ""
-                      }`}
-                      title={
-                        headerBranchName
-                          ? `Available quantity at ${headerBranchName}`
-                          : "Available quantity at this location"
-                      }
-                    >
-                      Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
+                  <span
+                    className={`pos-product-tile-media${
+                      apiMediaUrl(p.image_url) ? "" : " pos-product-tile-media--empty"
+                    }`}
+                    aria-hidden={apiMediaUrl(p.image_url) ? undefined : true}
+                  >
+                    {apiMediaUrl(p.image_url) ? (
+                      <img
+                        src={apiMediaUrl(p.image_url)}
+                        alt=""
+                        className="pos-product-thumb"
+                      />
+                    ) : null}
+                  </span>
+                  <span className="pos-product-tile-body">
+                    <span className="pos-product-name">{p.name}</span>
+                    {hasActiveDefaultLocation ? (
+                      <span
+                        className={`pos-product-stock${
+                          (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
+                            ? " pos-product-stock--none"
+                            : ""
+                        }`}
+                        title={
+                          headerBranchName
+                            ? `Available quantity at ${headerBranchName}`
+                            : "Available quantity at this location"
+                        }
+                      >
+                        Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
+                      </span>
+                    ) : null}
+                    {hasActiveDefaultLocation ? (
+                      <span className="pos-product-stock" title="Promised quantity to this location">
+                        Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
+                      </span>
+                    ) : null}
+                    <span className="pos-product-meta">
+                      <span className="pos-product-price">{money(p.unit_price)}</span>
+                      <code className="pos-product-code">{p.code}</code>
                     </span>
-                  ) : null}
-                  {hasActiveDefaultLocation ? (
-                    <span className="pos-product-stock" title="Promised quantity to this location">
-                      Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
-                    </span>
-                  ) : null}
-                  <span className="pos-product-meta">
-                    <code>{p.code}</code>
-                    <span className="pos-product-price">{money(p.unit_price)}</span>
                   </span>
                 </button>
               ))}
@@ -2224,8 +2177,18 @@ export function PosPage() {
                 cartLines.map((line) => (
                   <div key={line.cart_key} className="pos-line">
                     <div className="pos-line-info">
-                      <div className="pos-line-name">{line.name}</div>
-                      <div className="pos-line-sub">
+                      {apiMediaUrl(line.image_url) ? (
+                        <img
+                          src={apiMediaUrl(line.image_url)}
+                          alt=""
+                          className="pos-line-thumb"
+                        />
+                      ) : (
+                        <div className="pos-line-thumb pos-line-thumb--placeholder" aria-hidden />
+                      )}
+                      <div className="pos-line-info-text">
+                        <div className="pos-line-name">{line.name}</div>
+                        <div className="pos-line-sub">
                         <code>{line.code}</code> × {money(line.unit_price)}
                         {(multiStore && line.location_label) || (!multiStore && line.promised_location_label) ? (
                           <>
@@ -2237,6 +2200,7 @@ export function PosPage() {
                           </>
                         ) : null}
                       </div>
+                    </div>
                     </div>
                     <div className="pos-line-actions">
                       <input
@@ -2466,8 +2430,17 @@ export function PosPage() {
               Choose which store this product is picked from. You can only add
               from stores that have promised stock to this POS branch.
             </p>
-            <p style={{ margin: 0 }}>
-              <strong>{pickProduct.name}</strong> <code>{pickProduct.code}</code>
+            <p style={{ margin: 0 }} className="pos-pick-product-head">
+              {apiMediaUrl(pickProduct.image_url) ? (
+                <img
+                  src={apiMediaUrl(pickProduct.image_url)}
+                  alt=""
+                  className="pos-pick-product-thumb"
+                />
+              ) : null}
+              <span>
+                <strong>{pickProduct.name}</strong> <code>{pickProduct.code}</code>
+              </span>
             </p>
             {defaultLocationId == null ? (
               <p className="alert alert-error" style={{ margin: 0 }}>

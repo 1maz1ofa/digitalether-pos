@@ -26,6 +26,9 @@ const reserveIssueRouter = require("./routes/reserveIssue");
 
 const app = express();
 
+const uploadsRoot = path.join(__dirname, "uploads");
+fs.mkdirSync(path.join(uploadsRoot, "products"), { recursive: true });
+
 const corsOrigins = ["http://localhost:3000", process.env.FRONTEND_URL].filter(
   Boolean
 );
@@ -46,6 +49,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use("/uploads", express.static(uploadsRoot));
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });

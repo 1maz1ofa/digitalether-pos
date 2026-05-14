@@ -13,6 +13,7 @@ yarn-error.log*
 # =====================
 server/node_modules/
 server/.env
+server/uploads/
 
 # =====================
 # Client (React / CRA)

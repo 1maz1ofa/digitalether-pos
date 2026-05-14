@@ -1,14 +1,72 @@
+const path = require("path");
+const fs = require("fs");
 const express = require("express");
+const multer = require("multer");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 
 const router = express.Router();
 
+const productImagesDir = path.join(__dirname, "..", "uploads", "products");
+fs.mkdirSync(productImagesDir, { recursive: true });
+
+const PUBLIC_PRODUCT_IMAGE_PREFIX = "/uploads/products/";
+
+function localProductImageAbsolutePath(storedUrl) {
+  if (typeof storedUrl !== "string" || !storedUrl.startsWith(PUBLIC_PRODUCT_IMAGE_PREFIX)) {
+    return null;
+  }
+  const base = path.basename(storedUrl);
+  if (!base || base.includes("..") || base.includes("/") || base.includes("\\")) {
+    return null;
+  }
+  return path.join(productImagesDir, base);
+}
+
+function tryUnlinkLocalProductImage(storedUrl) {
+  const abs = localProductImageAbsolutePath(storedUrl);
+  if (!abs) return;
+  fs.unlink(abs, () => {});
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, productImagesDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || "").toLowerCase();
+      const allowed = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
+      const extFinal = allowed.includes(ext) ? ext : ".jpg";
+      cb(null, `${req.params.id}-${Date.now()}${extFinal}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype && file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image uploads are allowed"));
+    }
+  },
+});
+
+function runProductImageUpload(req, res, next) {
+  upload.single("image")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ error: "Image must be 5MB or smaller" });
+      }
+      return res.status(400).json({ error: err.message || "Upload failed" });
+    }
+    return res.status(400).json({ error: err.message || "Upload failed" });
+  });
+}
+
 const listSql = `
   SELECT p.id, p.code, p.name, p.description, p.barcode, p.unit_of_measure,
          p.category_id, c.name AS category_name,
          p.unit_cost, p.unit_price, p.vat_id, v.name AS vat_name, v.percentage AS vat_percentage, p.is_active,
-         p.reorder_level, p.created_at
+         p.reorder_level, p.image_url, p.created_at
   FROM product p
   LEFT JOIN category c ON c.id = p.category_id
   LEFT JOIN vat v ON v.id = p.vat_id
@@ -81,6 +139,49 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+router.post("/:id/image", runProductImageUpload, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Missing image file (field name: image)" });
+    }
+    const exists = await pool.query("SELECT image_url FROM product WHERE id = $1", [id]);
+    if (!exists.rowCount) {
+      fs.unlink(path.join(productImagesDir, req.file.filename), () => {});
+      return res.status(404).json({ error: "Product not found" });
+    }
+    const prevUrl = exists.rows[0].image_url;
+    const publicPath = `${PUBLIC_PRODUCT_IMAGE_PREFIX}${req.file.filename}`;
+    await pool.query("UPDATE product SET image_url = $1 WHERE id = $2", [publicPath, id]);
+    tryUnlinkLocalProductImage(prevUrl);
+    const detail = await pool.query(`${listSql} WHERE p.id = $1`, [id]);
+    res.json(detail.rows[0]);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
+router.delete("/:id/image", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+    const prev = await pool.query("SELECT image_url FROM product WHERE id = $1", [id]);
+    if (!prev.rowCount) return res.status(404).json({ error: "Product not found" });
+    const prevUrl = prev.rows[0].image_url;
+    await pool.query("UPDATE product SET image_url = NULL WHERE id = $1", [id]);
+    tryUnlinkLocalProductImage(prevUrl);
+    const detail = await pool.query(`${listSql} WHERE p.id = $1`, [id]);
+    res.json(detail.rows[0]);
+  } catch (err) {
+    sendPgError(res, err);
+  }
+});
+
 function parseOptionalNumber(val) {
   if (val === undefined || val === null || val === "") return null;
   const n = Number(val);
@@ -91,6 +192,12 @@ function parseOptionalInt(val) {
   if (val === undefined || val === null || val === "") return null;
   const n = parseInt(val, 10);
   return Number.isInteger(n) ? n : null;
+}
+
+function normalizeImageUrlInput(raw) {
+  if (raw === undefined || raw === null) return null;
+  const t = String(raw).trim();
+  return t === "" ? null : t;
 }
 
 router.post("/", async (req, res) => {
@@ -123,6 +230,7 @@ router.post("/", async (req, res) => {
     const isActive =
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
     const reorderLevel = parseOptionalInt(req.body?.reorder_level);
+    const imageUrl = normalizeImageUrlInput(req.body?.image_url);
 
     if (categoryId !== null) {
       const chk = await pool.query("SELECT 1 FROM category WHERE id = $1", [
@@ -148,8 +256,8 @@ router.post("/", async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO product (
         code, name, description, barcode, unit_of_measure, category_id,
-        unit_cost, unit_price, vat_id, is_active, reorder_level
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        unit_cost, unit_price, vat_id, is_active, reorder_level, image_url
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING id`,
       [
         String(code).trim(),
@@ -163,6 +271,7 @@ router.post("/", async (req, res) => {
         vatId,
         isActive,
         reorderLevel,
+        imageUrl,
       ]
     );
     const newId = rows[0].id;
@@ -208,6 +317,15 @@ router.put("/:id", async (req, res) => {
       req.body?.is_active === undefined ? true : Boolean(req.body.is_active);
     const reorderLevel = parseOptionalInt(req.body?.reorder_level);
 
+    const prevImg = await pool.query("SELECT image_url FROM product WHERE id = $1", [id]);
+    if (!prevImg.rowCount) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+    const prevUrl = prevImg.rows[0].image_url;
+    const imageUrl = Object.prototype.hasOwnProperty.call(req.body, "image_url")
+      ? normalizeImageUrlInput(req.body.image_url)
+      : prevUrl;
+
     if (categoryId !== null) {
       const chk = await pool.query("SELECT 1 FROM category WHERE id = $1", [
         categoryId,
@@ -227,8 +345,8 @@ router.put("/:id", async (req, res) => {
       `UPDATE product SET
         code = $1, name = $2, description = $3, barcode = $4, unit_of_measure = $5,
         category_id = $6, unit_cost = $7, unit_price = $8, vat_id = $9,
-        is_active = $10, reorder_level = $11
-      WHERE id = $12
+        is_active = $10, reorder_level = $11, image_url = $12
+      WHERE id = $13
       RETURNING id`,
       [
         String(code).trim(),
@@ -242,10 +360,14 @@ router.put("/:id", async (req, res) => {
         vatId,
         isActive,
         reorderLevel,
+        imageUrl,
         id,
       ]
     );
     if (!rows.length) return res.status(404).json({ error: "Product not found" });
+    if (imageUrl !== prevUrl) {
+      tryUnlinkLocalProductImage(prevUrl);
+    }
     const detail = await pool.query(`${listSql} WHERE p.id = $1`, [id]);
     res.json(detail.rows[0]);
   } catch (err) {
@@ -259,8 +381,12 @@ router.delete("/:id", async (req, res) => {
     if (!Number.isInteger(id) || id < 1) {
       return res.status(400).json({ error: "Invalid id" });
     }
+    const prev = await pool.query("SELECT image_url FROM product WHERE id = $1", [id]);
+    if (!prev.rowCount) return res.status(404).json({ error: "Product not found" });
+    const prevUrl = prev.rows[0].image_url;
     const { rowCount } = await pool.query("DELETE FROM product WHERE id = $1", [id]);
     if (!rowCount) return res.status(404).json({ error: "Product not found" });
+    tryUnlinkLocalProductImage(prevUrl);
     res.status(204).send();
   } catch (err) {
     sendPgError(res, err);

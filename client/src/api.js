@@ -1,5 +1,15 @@
 const API_BASE = process.env.REACT_APP_API_URL || "";
 
+/** Resolve stored `image_url` (relative or absolute) for use in `<img src>`. */
+export function apiMediaUrl(stored) {
+  if (stored == null || stored === "") return null;
+  const s = String(stored).trim();
+  if (!s) return null;
+  if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("data:")) return s;
+  if (s.startsWith("/")) return `${API_BASE}${s}`;
+  return s;
+}
+
 async function parseJsonSafe(res) {
   const text = await res.text();
   if (!text) return null;
@@ -82,6 +92,28 @@ export const api = {
       }),
     remove: (id) =>
       apiRequest(`/api/products/${id}`, { method: "DELETE" }),
+    uploadImage: async (id, file) => {
+      const url = `${API_BASE}/api/products/${encodeURIComponent(String(id))}/image`;
+      const body = new FormData();
+      body.append("image", file);
+      const res = await fetch(url, { method: "POST", body });
+      const parsed = res.status === 204 ? null : await parseJsonSafe(res);
+      if (!res.ok) {
+        const message =
+          parsed?.error && parsed?.detail
+            ? `${parsed.error} (${parsed.detail})`
+            : parsed?.error || res.statusText || "Upload failed";
+        const err = new Error(message);
+        err.status = res.status;
+        err.body = parsed;
+        throw err;
+      }
+      return parsed;
+    },
+    removeImage: (id) =>
+      apiRequest(`/api/products/${encodeURIComponent(String(id))}/image`, {
+        method: "DELETE",
+      }),
   },
   customers: {
     list: () => apiRequest("/api/customers"),
