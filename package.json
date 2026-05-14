@@ -1,37 +1,36 @@
 {
-  "name": "digitalether-template",
+  "name": "digitalether-pos",
   "version": "1.0.0",
-  "description": "DigitalEther full-stack template (React + Node.js)",
+  "description": "DigitalEther POS (React + Node.js)",
   "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix server\" \"npm start --prefix client\"",
     "start": "node server/index.js",
     "prebuild": "npm install --prefix server && npm install --prefix client",
     "build": "npm run build --prefix client",
-    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/1maz1ofa/digitalether-template.git"
+    "url": "git+https://github.com/1maz1ofa/digitalether-pos.git"
   },
   "keywords": [
     "react",
     "node",
     "express",
     "fullstack",
-    "template"
+    "pos"
   ],
   "author": "Ignatius Maziofa",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/1maz1ofa/digitalether-template/issues"
+    "url": "https://github.com/1maz1ofa/digitalether-pos/issues"
   },
-  "homepage": "https://github.com/1maz1ofa/digitalether-template#readme",
+  "homepage": "https://github.com/1maz1ofa/digitalether-pos#readme",
   "dependencies": {
     "concurrently": "^9.2.1"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

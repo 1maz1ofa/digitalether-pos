@@ -5,6 +5,9 @@ This file documents the full folder & file structure of the project.
 ---
 
 ```
+├── .github
+│   └── workflows
+│       └── azure-app-service.yml
 ├── .gitignore
 ├── client
 │   ├── .gitignore
@@ -90,4 +93,4 @@ This file documents the full folder & file structure of the project.
 
 ```
 
-Generated on: 13/5/2026, 13:14:03
+Generated on: 13/5/2026, 19:54:58
