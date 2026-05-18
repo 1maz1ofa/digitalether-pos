@@ -4,6 +4,7 @@ const express = require("express");
 const multer = require("multer");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const { getUserLocationId } = require("../utils/userLocationScope");
 
 const router = express.Router();
 
@@ -97,6 +98,13 @@ router.get("/:id/inventory-locations", async (req, res) => {
     if (!exists.rowCount) {
       return res.status(404).json({ error: "Product not found" });
     }
+    const userLoc = getUserLocationId(req.user);
+    const params = [id];
+    let locationClause = "";
+    if (userLoc != null) {
+      params.push(userLoc);
+      locationClause = ` AND l.id = $${params.length}`;
+    }
     const { rows } = await pool.query(
       `SELECT l.id AS location_id,
               l.code AS location_code,
@@ -128,7 +136,7 @@ router.get("/:id/inventory-locations", async (req, res) => {
          WHERE product_id = $1
          GROUP BY to_location_id
        ) pi ON pi.to_location_id = l.id
-       WHERE p.id = $1
+       WHERE p.id = $1${locationClause}
          AND (
            COALESCE(i.quantity, 0) > 0
            OR COALESCE(pr.sum_promised, 0) > 0
@@ -136,7 +144,7 @@ router.get("/:id/inventory-locations", async (req, res) => {
            OR COALESCE(pi.sum_in_promised, 0) > 0
          )
        ORDER BY l.name NULLS LAST, l.code NULLS LAST, l.id`,
-      [id]
+      params
     );
     res.json(rows);
   } catch (err) {

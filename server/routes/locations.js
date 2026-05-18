@@ -1,15 +1,25 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  getUserLocationId,
+  sendLocationForbidden,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
 
 router.get("/", async (req, res) => {
   try {
+    const userLoc = getUserLocationId(req.user);
+    const params = [];
+    const where = userLoc != null ? "WHERE id = $1" : "";
+    if (userLoc != null) params.push(userLoc);
     const { rows } = await pool.query(
       `SELECT id, code, name, d365_id, address, is_active, created_at
        FROM location
-       ORDER BY name NULLS LAST, code`
+       ${where}
+       ORDER BY name NULLS LAST, code`,
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -29,6 +39,10 @@ router.get("/:id", async (req, res) => {
       [id]
     );
     if (!rows.length) return res.status(404).json({ error: "Location not found" });
+    const userLoc = getUserLocationId(req.user);
+    if (userLoc != null && Number(rows[0].id) !== userLoc) {
+      return sendLocationForbidden(res);
+    }
     res.json(rows[0]);
   } catch (err) {
     sendPgError(res, err);

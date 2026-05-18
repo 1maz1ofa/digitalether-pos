@@ -1,6 +1,11 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  resolveLocationAccess,
+  sendLocationForbidden,
+  enforceLocationAccess,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
 
@@ -148,7 +153,10 @@ router.delete("/movement-types/:id", async (req, res) => {
 /** On-hand balances with product and location labels. */
 router.get("/stock", async (req, res) => {
   try {
-    const locationId = parseOptionalInt(req.query?.location_id);
+    const access = resolveLocationAccess(req.user, req.query?.location_id);
+    if (!access.ok) return sendLocationForbidden(res, access.error);
+    const locationId =
+      access.locationId !== null ? access.locationId : parseOptionalInt(req.query?.location_id);
     const productId = parseOptionalInt(req.query?.product_id);
     const params = [];
     const filters = [];
@@ -184,6 +192,37 @@ router.get("/stock", async (req, res) => {
  */
 router.get("/stock/summary", async (req, res) => {
   try {
+    const access = resolveLocationAccess(req.user, req.query?.location_id);
+    if (!access.ok) return sendLocationForbidden(res, access.error);
+    const locationId =
+      access.locationId !== null ? access.locationId : parseOptionalInt(req.query?.location_id);
+
+    const params = [];
+    let inventoryJoin = "LEFT JOIN inventory i ON i.product_id = p.id";
+    if (locationId !== null) {
+      params.push(locationId);
+      inventoryJoin = `LEFT JOIN inventory i ON i.product_id = p.id AND i.location_id = $${params.length}`;
+    }
+
+    const promiseJoin =
+      locationId !== null
+        ? `LEFT JOIN (
+         SELECT product_id,
+                SUM(COALESCE(reserved_quantity, 0)) FILTER (WHERE from_location_id = $1)::numeric AS sum_reserved,
+                SUM(COALESCE(promised_quantity, 0)) FILTER (WHERE from_location_id = $1)::numeric AS sum_out_promised,
+                SUM(COALESCE(promised_quantity, 0)) FILTER (WHERE to_location_id = $1)::numeric AS sum_in_promised
+         FROM inventory_promise
+         GROUP BY product_id
+       ) pr ON pr.product_id = p.id`
+        : `LEFT JOIN (
+         SELECT product_id,
+                SUM(COALESCE(reserved_quantity, 0))::numeric AS sum_reserved,
+                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_out_promised,
+                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_in_promised
+         FROM inventory_promise
+         GROUP BY product_id
+       ) pr ON pr.product_id = p.id`;
+
     const { rows } = await pool.query(
       `SELECT p.id AS product_id,
               p.code AS product_code,
@@ -192,23 +231,17 @@ router.get("/stock/summary", async (req, res) => {
               p.is_active,
               COALESCE(SUM(i.quantity), 0)::numeric AS total_quantity,
               COALESCE(SUM(i.quantity), 0)::numeric AS stock_on_hand,
-              COUNT(i.id) FILTER (WHERE i.quantity IS NOT NULL) AS location_count,
+              COUNT(i.id) FILTER (WHERE i.quantity IS NOT NULL AND COALESCE(i.quantity, 0) <> 0) AS location_count,
               COALESCE(pr.sum_reserved, 0)::numeric AS reserved_quantity,
               COALESCE(pr.sum_out_promised, 0)::numeric AS out_promised_quantity,
               COALESCE(pr.sum_in_promised, 0)::numeric AS in_promised_quantity
        FROM product p
-       LEFT JOIN inventory i ON i.product_id = p.id
-       LEFT JOIN (
-         SELECT product_id,
-                SUM(COALESCE(reserved_quantity, 0))::numeric AS sum_reserved,
-                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_out_promised,
-                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_in_promised
-         FROM inventory_promise
-         GROUP BY product_id
-       ) pr ON pr.product_id = p.id
+       ${inventoryJoin}
+       ${promiseJoin}
        GROUP BY p.id, p.code, p.name, p.unit_of_measure, p.is_active,
                 pr.sum_reserved, pr.sum_out_promised, pr.sum_in_promised
-       ORDER BY p.name NULLS LAST, p.code NULLS LAST, p.id`
+       ORDER BY p.name NULLS LAST, p.code NULLS LAST, p.id`,
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -222,6 +255,14 @@ router.get("/movements", async (req, res) => {
     let limit = parseInt(req.query?.limit, 10);
     if (!Number.isInteger(limit) || limit < 1) limit = 100;
     if (limit > 2000) limit = 2000;
+    const access = resolveLocationAccess(req.user, req.query?.location_id);
+    if (!access.ok) return sendLocationForbidden(res, access.error);
+    const locationId =
+      access.locationId !== null ? access.locationId : parseOptionalInt(req.query?.location_id);
+    const params = [limit];
+    const locationFilter =
+      locationId !== null ? `WHERE im.location_id = $2` : "";
+    if (locationId !== null) params.push(locationId);
     const { rows } = await pool.query(
       `SELECT im.id, im.product_id, im.location_id, im.quantity, im.unit_cost, im.total_cost,
               im.movement_type_id, im.reference_type, im.reference_id, im.notes,
@@ -233,9 +274,10 @@ router.get("/movements", async (req, res) => {
        LEFT JOIN product p ON p.id = im.product_id
        LEFT JOIN location l ON l.id = im.location_id
        LEFT JOIN movement_type mt ON mt.id = im.movement_type_id
+       ${locationFilter}
        ORDER BY im.id DESC
        LIMIT $1`,
-      [limit]
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -258,6 +300,9 @@ router.post("/movements", async (req, res) => {
   }
   if (!Number.isInteger(locationId) || locationId < 1) {
     return res.status(400).json({ error: "location_id is required" });
+  }
+  if (!enforceLocationAccess(req.user, locationId, res)) {
+    return;
   }
   if (!Number.isInteger(movementTypeId) || movementTypeId < 1) {
     return res.status(400).json({ error: "movement_type_id is required" });

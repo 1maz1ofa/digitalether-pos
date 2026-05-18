@@ -1,6 +1,12 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  resolveLocationAccess,
+  sendLocationForbidden,
+  enforceLocationAccess,
+  getUserLocationId,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
 
@@ -18,7 +24,12 @@ function parsePromisedQuantity(val) {
 /** List promises, optionally filtered by from_location_id and/or product_id. */
 router.get("/", async (req, res) => {
   try {
-    const fromLocationId = parseRequiredPositiveInt(req.query?.from_location_id);
+    const access = resolveLocationAccess(req.user, req.query?.from_location_id);
+    if (!access.ok) return sendLocationForbidden(res, access.error);
+    const fromLocationId =
+      access.locationId !== null
+        ? access.locationId
+        : parseRequiredPositiveInt(req.query?.from_location_id);
     const productId = parseRequiredPositiveInt(req.query?.product_id);
     const params = [];
     const clauses = [];
@@ -87,6 +98,13 @@ router.post("/", async (req, res) => {
   }
   if (promisedQty === null) {
     return res.status(400).json({ error: "promised_quantity must be a number greater than zero" });
+  }
+  if (!enforceLocationAccess(req.user, fromLocationId, res)) {
+    return;
+  }
+  const userLoc = getUserLocationId(req.user);
+  if (userLoc != null && toLocationId === userLoc) {
+    return res.status(400).json({ error: "Cannot promise stock to your own location." });
   }
 
   const client = await pool.connect();

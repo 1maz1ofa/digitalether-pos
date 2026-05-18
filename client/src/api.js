@@ -1,4 +1,13 @@
+import { clearStoredToken, getStoredToken } from "./authStorage";
+
 const API_BASE = process.env.REACT_APP_API_URL || "";
+
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  const token = getStoredToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 /** Resolve stored `image_url` (relative or absolute) for use in `<img src>`. */
 export function apiMediaUrl(stored) {
@@ -22,10 +31,16 @@ async function parseJsonSafe(res) {
 
 export async function apiRequest(path, options = {}) {
   const url = `${API_BASE}${path}`;
-  const headers = { "Content-Type": "application/json", ...options.headers };
+  const headers = authHeaders({
+    "Content-Type": "application/json",
+    ...options.headers,
+  });
   const res = await fetch(url, { ...options, headers });
   const body = res.status === 204 ? null : await parseJsonSafe(res);
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/api/auth/login")) {
+      clearStoredToken();
+    }
     const message =
       body?.error && body?.detail
         ? `${body.error} (${body.detail})`
@@ -39,6 +54,15 @@ export async function apiRequest(path, options = {}) {
 }
 
 export const api = {
+  auth: {
+    login: (data) =>
+      apiRequest("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    me: () => apiRequest("/api/auth/me"),
+    logout: () => apiRequest("/api/auth/logout", { method: "POST" }),
+  },
   categories: {
     list: () => apiRequest("/api/categories"),
     get: (id) => apiRequest(`/api/categories/${id}`),
@@ -96,7 +120,11 @@ export const api = {
       const url = `${API_BASE}/api/products/${encodeURIComponent(String(id))}/image`;
       const body = new FormData();
       body.append("image", file);
-      const res = await fetch(url, { method: "POST", body });
+      const res = await fetch(url, {
+        method: "POST",
+        body,
+        headers: authHeaders(),
+      });
       const parsed = res.status === 204 ? null : await parseJsonSafe(res);
       if (!res.ok) {
         const message =
@@ -304,11 +332,30 @@ export const api = {
       const q = params.toString() ? `?${params.toString()}` : "";
       return apiRequest(`/api/inventory/stock${q}`);
     },
-    stockSummary: () => apiRequest("/api/inventory/stock/summary"),
-    movements: (limit = 100) =>
-      apiRequest(
-        `/api/inventory/movements?limit=${encodeURIComponent(String(limit))}`
-      ),
+    stockSummary: (locationId) => {
+      const params = new URLSearchParams();
+      if (
+        locationId !== null &&
+        locationId !== undefined &&
+        String(locationId).trim() !== ""
+      ) {
+        params.set("location_id", String(locationId).trim());
+      }
+      const q = params.toString() ? `?${params.toString()}` : "";
+      return apiRequest(`/api/inventory/stock/summary${q}`);
+    },
+    movements: (limit = 100, locationId) => {
+      const params = new URLSearchParams();
+      params.set("limit", String(limit));
+      if (
+        locationId !== null &&
+        locationId !== undefined &&
+        String(locationId).trim() !== ""
+      ) {
+        params.set("location_id", String(locationId).trim());
+      }
+      return apiRequest(`/api/inventory/movements?${params.toString()}`);
+    },
     postMovement: (data) =>
       apiRequest("/api/inventory/movements", {
         method: "POST",

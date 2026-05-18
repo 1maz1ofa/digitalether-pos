@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { getUserLocationId } from "../utils/userLocation";
 
 const MOVEMENTS_LIMIT = 500;
 
@@ -46,15 +48,17 @@ function locationCell(row) {
 export function MovementPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
   const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   const refreshMovements = useCallback(async () => {
-    const mv = await api.inventory.movements(MOVEMENTS_LIMIT);
+    const mv = await api.inventory.movements(MOVEMENTS_LIMIT, userLocationId ?? undefined);
     setMovements(mv);
-  }, []);
+  }, [userLocationId]);
 
   const load = useCallback(async () => {
     setError("");

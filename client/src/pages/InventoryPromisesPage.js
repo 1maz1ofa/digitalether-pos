@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useAuth } from "../context/AuthContext";
 import { readPosWorkstation } from "../posWorkstationStorage";
+import {
+  canChangeRegisterLocation,
+  filterLocationsForUser,
+  resolveDefaultLocationId,
+} from "../utils/userLocation";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -28,6 +34,8 @@ const emptyForm = {
 };
 
 export function InventoryPromisesPage() {
+  const { user } = useAuth();
+  const canChangeLocation = canChangeRegisterLocation(user);
   const [searchParams] = useSearchParams();
   const [locations, setLocations] = useState([]);
   const [products, setProducts] = useState([]);
@@ -44,8 +52,8 @@ export function InventoryPromisesPage() {
   const [formError, setFormError] = useState("");
 
   const activeLocations = useMemo(
-    () => locations.filter((l) => l.is_active !== false),
-    [locations]
+    () => filterLocationsForUser(user, locations.filter((l) => l.is_active !== false)),
+    [locations, user]
   );
 
   const promisedByProductId = useMemo(() => {
@@ -102,14 +110,16 @@ export function InventoryPromisesPage() {
       setLocations(locs);
       setProducts(prods.filter((p) => p.is_active !== false));
 
-      const active = locs.filter((l) => l.is_active !== false);
-      const defId = settings?.defaultLocationId;
-      const defOk =
-        defId != null && active.some((l) => String(l.id) === String(defId));
-      if (defOk) {
+      const active = filterLocationsForUser(
+        user,
+        locs.filter((l) => l.is_active !== false)
+      );
+      const defId = resolveDefaultLocationId(user, {
+        settingsLocationId: settings?.defaultLocationId,
+        activeLocations: active,
+      });
+      if (defId != null) {
         setFromLocationId(String(defId));
-      } else if (active.length) {
-        setFromLocationId(String(active[0].id));
       } else {
         setFromLocationId("");
       }
@@ -118,7 +128,7 @@ export function InventoryPromisesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   const loadPromisesData = useCallback(async () => {
     const productParam = searchParams.get("product");
@@ -415,6 +425,7 @@ export function InventoryPromisesPage() {
               onChange={(e) =>
                 setForm({ ...form, from_location_id: e.target.value, to_location_id: "" })
               }
+              disabled={!canChangeLocation}
               required
             >
               <option value="">Select source location…</option>

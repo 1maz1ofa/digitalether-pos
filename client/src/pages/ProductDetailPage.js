@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, apiMediaUrl } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { getUserLocationId } from "../utils/userLocation";
 
 function money(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -25,6 +27,8 @@ function vatLabel(row) {
 }
 
 export function ProductDetailPage() {
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
   const { id: idParam } = useParams();
   const id = Number(idParam);
   const idOk = Number.isInteger(id) && id > 0;
@@ -48,7 +52,12 @@ export function ProductDetailPage() {
         api.products.inventoryLocations(id),
       ]);
       setProduct(p);
-      setLocations(locs);
+      const rowsList = Array.isArray(locs) ? locs : [];
+      setLocations(
+        userLocationId != null
+          ? rowsList.filter((r) => Number(r.location_id) === userLocationId)
+          : rowsList
+      );
     } catch (e) {
       setProduct(null);
       setLocations([]);
@@ -56,7 +65,7 @@ export function ProductDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, idOk]);
+  }, [id, idOk, userLocationId]);
 
   useEffect(() => {
     load();

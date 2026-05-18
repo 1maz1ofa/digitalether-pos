@@ -28,6 +28,8 @@ const inventoryRouter = require("./routes/inventory");
 const inventoryPromisesRouter = require("./routes/inventoryPromises");
 const reserveIssueRouter = require("./routes/reserveIssue");
 const stocktakeRouter = require("./routes/stocktake");
+const authRouter = require("./routes/auth");
+const { requireAuth, isPublicApiRequest } = require("./middleware/requireAuth");
 
 const app = express();
 
@@ -65,6 +67,13 @@ if (!serveClient) {
     res.json({ message: "Server is running 🚀" });
   });
 }
+
+app.use("/api/auth", authRouter);
+
+app.use("/api", (req, res, next) => {
+  if (isPublicApiRequest(req)) return next();
+  requireAuth(req, res, next);
+});
 
 // ✅ API routes
 app.use("/api/categories", categoriesRouter);

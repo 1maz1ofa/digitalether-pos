@@ -12,4 +12,25 @@ function hashPassword(plain) {
   });
 }
 
-module.exports = { hashPassword };
+function verifyPassword(plain, stored) {
+  if (!stored || typeof stored !== "string") {
+    return Promise.resolve(false);
+  }
+  const [salt, hashHex] = stored.split(":");
+  if (!salt || !hashHex) return Promise.resolve(false);
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(String(plain), salt, SCRYPT_KEYLEN, (err, derivedKey) => {
+      if (err) reject(err);
+      else {
+        const expected = Buffer.from(hashHex, "hex");
+        const actual = derivedKey;
+        resolve(
+          expected.length === actual.length &&
+            crypto.timingSafeEqual(expected, actual)
+        );
+      }
+    });
+  });
+}
+
+module.exports = { hashPassword, verifyPassword };

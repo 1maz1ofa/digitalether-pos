@@ -1,6 +1,12 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  resolveLocationAccess,
+  sendLocationForbidden,
+  enforceLocationAccess,
+  getUserLocationId,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
 
@@ -98,6 +104,21 @@ async function fetchStocktakeBundle(id) {
   return { header: headerRes.rows[0], details: detailsRes.rows };
 }
 
+/** Returns false after sending 403 when the stock take is at another branch. */
+async function ensureStocktakeAccess(req, res, stocktakeId, db = pool) {
+  const userLoc = getUserLocationId(req.user);
+  if (userLoc == null) return true;
+  const { rows } = await db.query("SELECT location_id FROM stocktake_header WHERE id = $1", [
+    stocktakeId,
+  ]);
+  if (!rows.length) return true;
+  if (Number(rows[0].location_id) !== userLoc) {
+    sendLocationForbidden(res);
+    return false;
+  }
+  return true;
+}
+
 function normalizeStatus(status) {
   const s = String(status || "DRAFT").trim().toUpperCase();
   return HEADER_STATUSES.includes(s) ? s : "DRAFT";
@@ -187,7 +208,12 @@ async function recordInventoryMovement(client, {
 /** List stock take headers. */
 router.get("/", async (req, res) => {
   try {
-    const locationId = parseOptionalInt(req.query?.location_id);
+    const access = resolveLocationAccess(req.user, req.query?.location_id);
+    if (!access.ok) return sendLocationForbidden(res, access.error);
+    const locationId =
+      access.locationId !== null
+        ? access.locationId
+        : parseOptionalInt(req.query?.location_id);
     const status = safeText(req.query?.status);
     const params = [];
     const filters = [];
@@ -220,6 +246,10 @@ router.get("/:id", async (req, res) => {
     }
     const bundle = await fetchStocktakeBundle(id);
     if (!bundle) return res.status(404).json({ error: "Stock take not found" });
+    const userLoc = getUserLocationId(req.user);
+    if (userLoc != null && Number(bundle.header?.location_id) !== userLoc) {
+      return sendLocationForbidden(res);
+    }
     res.json(bundle);
   } catch (err) {
     sendPgError(res, err);
@@ -245,6 +275,9 @@ router.post("/", async (req, res) => {
     }
     if (locationId === null || locationId < 1) {
       return res.status(400).json({ error: "location_id is required" });
+    }
+    if (!enforceLocationAccess(req.user, locationId, res)) {
+      return;
     }
 
     const locChk = await pool.query("SELECT 1 FROM location WHERE id = $1", [locationId]);
@@ -282,6 +315,10 @@ router.put("/:id", async (req, res) => {
     if (!existing.rows.length) {
       return res.status(404).json({ error: "Stock take not found" });
     }
+    const userLoc = getUserLocationId(req.user);
+    if (userLoc != null && Number(existing.rows[0].location_id) !== userLoc) {
+      return sendLocationForbidden(res);
+    }
 
     const description = safeText(req.body?.description);
     const stocktakeDate = parseDateOnly(req.body?.stocktake_date);
@@ -313,6 +350,9 @@ router.put("/:id", async (req, res) => {
     }
 
     if (locationId !== null && locationId !== existing.rows[0].location_id) {
+      if (!enforceLocationAccess(req.user, locationId, res)) {
+        return;
+      }
       const detailChk = await pool.query(
         "SELECT 1 FROM stocktake_detail WHERE stocktake_id = $1 LIMIT 1",
         [id]
@@ -372,6 +412,7 @@ router.delete("/:id", async (req, res) => {
     if (!Number.isInteger(id) || id < 1) {
       return res.status(400).json({ error: "Invalid id" });
     }
+    if (!(await ensureStocktakeAccess(req, res, id))) return;
     const { rowCount } = await pool.query("DELETE FROM stocktake_header WHERE id = $1", [id]);
     if (!rowCount) return res.status(404).json({ error: "Stock take not found" });
     res.status(204).send();
@@ -389,6 +430,7 @@ router.post("/:id/populate-from-stock", async (req, res) => {
   if (!Number.isInteger(id) || id < 1) {
     return res.status(400).json({ error: "Invalid id" });
   }
+  if (!(await ensureStocktakeAccess(req, res, id))) return;
 
   const includeZero =
     req.body?.include_zero === true || String(req.query?.include_zero) === "1";
@@ -461,6 +503,7 @@ router.post("/:id/details", async (req, res) => {
   if (!Number.isInteger(stocktakeId) || stocktakeId < 1) {
     return res.status(400).json({ error: "Invalid stock take id" });
   }
+  if (!(await ensureStocktakeAccess(req, res, stocktakeId))) return;
 
   const productId = parseOptionalInt(req.body?.product_id);
   if (productId === null || productId < 1) {
@@ -567,6 +610,7 @@ router.put("/:id/details/:detailId", async (req, res) => {
   if (!Number.isInteger(detailId) || detailId < 1) {
     return res.status(400).json({ error: "Invalid detail id" });
   }
+  if (!(await ensureStocktakeAccess(req, res, stocktakeId))) return;
 
   const client = await pool.connect();
   try {
@@ -663,6 +707,7 @@ router.post("/:id/confirm", async (req, res) => {
   if (!Number.isInteger(id) || id < 1) {
     return res.status(400).json({ error: "Invalid id" });
   }
+  if (!(await ensureStocktakeAccess(req, res, id))) return;
 
   const approvedBy = safeText(req.body?.approved_by);
 
@@ -820,6 +865,7 @@ router.delete("/:id/details/:detailId", async (req, res) => {
   if (!Number.isInteger(detailId) || detailId < 1) {
     return res.status(400).json({ error: "Invalid detail id" });
   }
+  if (!(await ensureStocktakeAccess(req, res, stocktakeId))) return;
 
   const client = await pool.connect();
   try {

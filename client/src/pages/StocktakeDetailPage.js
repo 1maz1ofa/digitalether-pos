@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useAuth } from "../context/AuthContext";
+import { filterLocationsForUser, getUserLocationId } from "../utils/userLocation";
 import {
   downloadStocktakeCsv,
   printStocktakePdf,
@@ -83,6 +85,10 @@ function productLabel(p) {
 }
 
 export function StocktakeDetailPage() {
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
+  const canChangeLocation = userLocationId == null;
+
   const { id: idParam } = useParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -122,9 +128,13 @@ export function StocktakeDetailPage() {
       api.locations.list(),
       api.products.list(),
     ]);
-    setLocations(locs.filter((l) => l.is_active !== false));
+    const activeLocs = locs.filter((l) => l.is_active !== false);
+    setLocations(filterLocationsForUser(user, activeLocs));
     setProducts(prods.filter((p) => p.is_active !== false));
-  }, []);
+    if (isNew && userLocationId != null) {
+      setHeaderForm((prev) => ({ ...prev, location_id: String(userLocationId) }));
+    }
+  }, [isNew, user, userLocationId]);
 
   const loadStocktake = useCallback(async () => {
     if (!idOk) {
@@ -523,7 +533,9 @@ export function StocktakeDetailPage() {
                       setHeaderForm({ ...headerForm, location_id: e.target.value })
                     }
                     required
-                    disabled={(!isNew && details.length > 0) || isLocked}
+                    disabled={
+                      !canChangeLocation || ((!isNew && details.length > 0) || isLocked)
+                    }
                   >
                     <option value="">Select location…</option>
                     {locations.map((loc) => (

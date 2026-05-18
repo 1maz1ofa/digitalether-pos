@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { filterLocationsForUser, getUserLocationId } from "../utils/userLocation";
 
 const emptyForm = {
   product_id: "",
@@ -27,6 +29,9 @@ function movementTypeLabel(row) {
 
 export function MovementNewPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
+  const canChangeLocation = userLocationId == null;
   const [products, setProducts] = useState([]);
   const [locations, setLocations] = useState([]);
   const [movementTypes, setMovementTypes] = useState([]);
@@ -45,14 +50,18 @@ export function MovementNewPage() {
         api.inventory.movementTypes(),
       ]);
       setProducts(prods.filter((p) => p.is_active !== false));
-      setLocations(locs.filter((l) => l.is_active !== false));
+      const activeLocs = locs.filter((l) => l.is_active !== false);
+      setLocations(filterLocationsForUser(user, activeLocs));
+      if (userLocationId != null) {
+        setForm((prev) => ({ ...prev, location_id: String(userLocationId) }));
+      }
       setMovementTypes(types);
     } catch (e) {
       setError(e.message || "Failed to load form");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user, userLocationId]);
 
   useEffect(() => {
     load();
@@ -180,6 +189,7 @@ export function MovementNewPage() {
                     onChange={(e) =>
                       setForm({ ...form, location_id: e.target.value })
                     }
+                    disabled={!canChangeLocation}
                     required
                   >
                     <option value="">— Select —</option>

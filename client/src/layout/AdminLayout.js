@@ -1,5 +1,6 @@
 import { useLayoutEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { COLOR_THEME_OPTIONS, useTheme } from "../context/ThemeContext";
 
 function MenuIcon() {
@@ -118,6 +119,8 @@ function ThemeToggleButton({ theme, toggleTheme, nextLabel, ariaLabel }) {
 
 export function AdminLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const { theme, toggleTheme, colorTheme, setColorTheme } = useTheme();
   const nextLabel = theme === "dark" ? "Light" : "Dark";
   const ariaLabel =
@@ -137,6 +140,30 @@ export function AdminLayout() {
   }, [location.pathname]);
 
   const navCollapsed = isPosRoute && !posNavExpanded;
+
+  async function handleLogout() {
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
+  const userMenu = user ? (
+    <div className="admin-user-menu">
+      <span className="admin-user-name" title={user.email}>
+        {user.full_name || user.email}
+        {user.location_label ? (
+          <span className="admin-user-location"> · {user.location_label}</span>
+        ) : null}
+      </span>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        onClick={handleLogout}
+      >
+        Sign out
+      </button>
+    </div>
+  ) : null;
+
   const themeToggle = (
     <ThemeToggleButton
       theme={theme}
@@ -206,6 +233,7 @@ export function AdminLayout() {
                 </button>
               ) : null}
               {colorThemeMenu}
+              {userMenu}
               {themeToggle}
             </nav>
           ) : (
@@ -224,6 +252,7 @@ export function AdminLayout() {
                 colorTheme={colorTheme}
                 setColorTheme={setColorTheme}
               />
+              {userMenu}
               {themeToggle}
             </div>
           )}

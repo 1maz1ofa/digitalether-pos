@@ -7,6 +7,10 @@ const {
   createCheckoutProfiler,
 } = require("../utils/checkoutProfiler");
 const {
+  enforceLocationAccess,
+  getUserLocationId,
+} = require("../utils/userLocationScope");
+const {
   d365Configured,
   d365ConfigError,
   getFinalApprovedCreditApplicationById,
@@ -457,6 +461,14 @@ router.get("/settings", async (req, res) => {
     const parsedLoc = parseInt(rawLoc, 10);
     const parsedTerm = parseInt(rawTerm, 10);
 
+    if (
+      Number.isInteger(parsedLoc) &&
+      parsedLoc >= 1 &&
+      !enforceLocationAccess(req.user, parsedLoc, res)
+    ) {
+      return;
+    }
+
     let resolvedLocation = null;
     let terminal = null;
     if (
@@ -809,6 +821,9 @@ router.post("/checkout", async (req, res) => {
         error: "location_id is required (POS branch / workstation).",
       });
     }
+    if (!enforceLocationAccess(req.user, resolvedDefaultLocationId, res)) {
+      return;
+    }
     const hasDefaultLocation =
       resolvedDefaultLocationId != null &&
       Number.isInteger(resolvedDefaultLocationId) &&
@@ -846,6 +861,12 @@ router.post("/checkout", async (req, res) => {
     }
 
     const multiStoreMode = req.body?.multi_store === true;
+    const userLocationId = getUserLocationId(req.user);
+    if (userLocationId != null && multiStoreMode) {
+      return res.status(403).json({
+        error: "Multiple stores is not available for your assigned location.",
+      });
+    }
 
     const pricedLines = [];
     for (const line of items) {
@@ -882,6 +903,11 @@ router.post("/checkout", async (req, res) => {
         return res.status(400).json({
           error:
             "Each item must be sold from the register branch. Enable multiple stores on the POS to sell from another branch.",
+        });
+      }
+      if (userLocationId != null && lineLocationId !== userLocationId) {
+        return res.status(403).json({
+          error: "You may only sell from your assigned location.",
         });
       }
 

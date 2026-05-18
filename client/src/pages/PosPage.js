@@ -6,7 +6,13 @@ import {
   presentCheckoutProfileReport,
 } from "../checkoutProfileClient";
 import { Modal } from "../components/Modal";
+import { useAuth } from "../context/AuthContext";
 import { clearPosWorkstation, readPosWorkstation, writePosWorkstation } from "../posWorkstationStorage";
+import {
+  canChangeRegisterLocation,
+  filterLocationsForUser,
+  getUserLocationId,
+} from "../utils/userLocation";
 
 const MULTI_STORE_STORAGE_KEY = "de-pos-multi-store";
 const HTB_CREDIT_SELECTION_STORAGE_KEY = "de-pos-htb-credit-selection";
@@ -420,6 +426,10 @@ function d365CreditRecordMatchesQuery(row, raw) {
 }
 
 export function PosPage() {
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
+  const canChangeLocation = canChangeRegisterLocation(user);
+
   const [products, setProducts] = useState([]);
   const [locations, setLocations] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -433,7 +443,9 @@ export function PosPage() {
   const [currencies, setCurrencies] = useState([]);
   const [currencyId, setCurrencyId] = useState("");
   const [customerId, setCustomerId] = useState("");
-  const [multiStore, setMultiStore] = useState(() => readMultiStorePreference());
+  const [multiStore, setMultiStore] = useState(() =>
+    canChangeRegisterLocation(user) ? readMultiStorePreference() : false
+  );
   const [cart, setCart] = useState(() => new Map());
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutElapsedMs, setCheckoutElapsedMs] = useState(0);
@@ -531,6 +543,12 @@ export function PosPage() {
   }, [error, paymentModalOpen]);
 
   useEffect(() => {
+    if (!canChangeLocation) {
+      setMultiStore(false);
+    }
+  }, [canChangeLocation]);
+
+  useEffect(() => {
     if (!paymentError || !paymentModalOpen) return undefined;
     const id = window.setTimeout(() => setPaymentError(""), POS_ERROR_DISMISS_MS);
     return () => window.clearTimeout(id);
@@ -540,7 +558,13 @@ export function PosPage() {
     setError("");
     setLoading(true);
     try {
-      const ws = readPosWorkstation();
+      let ws = readPosWorkstation();
+      if (userLocationId != null) {
+        if (ws && ws.locationId !== userLocationId) {
+          clearPosWorkstation();
+          ws = null;
+        }
+      }
       const settingsReq =
         ws != null
           ? api.pos.settings({ locationId: ws.locationId, terminalId: ws.terminalId })
@@ -557,8 +581,9 @@ export function PosPage() {
           api.pos.saleTypes(),
         ]);
       const activeLocs = loc.filter((l) => l.is_active !== false);
+      const branchLocs = filterLocationsForUser(user, activeLocs);
       setProducts(p);
-      setLocations(activeLocs);
+      setLocations(branchLocs);
       const termList = Array.isArray(termRows) ? termRows : [];
       setTerminals(termList);
       setCustomers(cust);
@@ -577,7 +602,8 @@ export function PosPage() {
       );
       const locOk =
         settings?.defaultLocationId != null &&
-        activeLocs.some((l) => String(l.id) === String(settings.defaultLocationId));
+        branchLocs.some((l) => String(l.id) === String(settings.defaultLocationId)) &&
+        (userLocationId == null || Number(settings.defaultLocationId) === userLocationId);
       const termOk =
         settings?.terminalId != null &&
         termList.some(
@@ -587,7 +613,11 @@ export function PosPage() {
             t.is_active !== false
         );
       if (!locOk || !termOk) {
-        setWorkstationFormLocationId(ws ? String(ws.locationId) : "");
+        const defaultLocId =
+          userLocationId != null
+            ? userLocationId
+            : ws?.locationId ?? settings?.defaultLocationId ?? null;
+        setWorkstationFormLocationId(defaultLocId != null ? String(defaultLocId) : "");
         setWorkstationFormTerminalId(ws ? String(ws.terminalId) : "");
         setWorkstationFormError("");
         setWorkstationModalMode("setup");
@@ -619,7 +649,7 @@ export function PosPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user, userLocationId]);
 
   const signOutRegister = useCallback(async () => {
     clearPosWorkstation();
@@ -1042,7 +1072,10 @@ export function PosPage() {
 
   const applyWorkstationFromForm = useCallback(async () => {
     setWorkstationFormError("");
-    const locId = parseInt(workstationFormLocationId, 10);
+    const locId =
+      userLocationId != null
+        ? userLocationId
+        : parseInt(workstationFormLocationId, 10);
     const termId = parseInt(workstationFormTerminalId, 10);
     if (!Number.isInteger(locId) || locId < 1) {
       setWorkstationFormError("Choose a branch.");
@@ -1086,7 +1119,7 @@ export function PosPage() {
     } finally {
       setWorkstationSaving(false);
     }
-  }, [workstationFormLocationId, workstationFormTerminalId, locations, terminals]);
+  }, [workstationFormLocationId, workstationFormTerminalId, locations, terminals, userLocationId]);
 
   useEffect(() => {
     if (!workstationModalMode) return;
@@ -1156,7 +1189,10 @@ export function PosPage() {
     (async () => {
       const productId = pickProduct.id;
       const stockPromise = api.inventory
-        .stock({ productId })
+        .stock({
+          productId,
+          ...(userLocationId != null ? { locationId: userLocationId } : {}),
+        })
         .then((rows) => {
           if (cancelled) return;
           const next = new Map();
@@ -1221,7 +1257,7 @@ export function PosPage() {
     return () => {
       cancelled = true;
     };
-  }, [pickProduct, defaultLocationId]);
+  }, [pickProduct, defaultLocationId, userLocationId]);
 
   const missingCheckoutItems = useMemo(() => {
     const missing = [];
@@ -1788,7 +1824,11 @@ export function PosPage() {
                   onClick={() => {
                     setWorkstationFormError("");
                     setWorkstationFormLocationId(
-                      posSettings?.defaultLocationId != null ? String(posSettings.defaultLocationId) : ""
+                      userLocationId != null
+                        ? String(userLocationId)
+                        : posSettings?.defaultLocationId != null
+                          ? String(posSettings.defaultLocationId)
+                          : ""
                     );
                     setWorkstationFormTerminalId(
                       posSettings?.terminalId != null ? String(posSettings.terminalId) : ""
@@ -1796,7 +1836,7 @@ export function PosPage() {
                     setWorkstationModalMode("change");
                   }}
                 >
-                  Change register
+                  {canChangeLocation ? "Change register" : "Change terminal"}
                 </button>
                 <button
                   type="button"
@@ -2105,14 +2145,16 @@ export function PosPage() {
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search products"
             />
-            <label className="pos-multi-store-toggle">
-              <input
-                type="checkbox"
-                checked={multiStore}
-                onChange={(e) => applyMultiStore(e.target.checked)}
-              />
-              <span>Multiple stores</span>
-            </label>
+            {canChangeLocation ? (
+              <label className="pos-multi-store-toggle">
+                <input
+                  type="checkbox"
+                  checked={multiStore}
+                  onChange={(e) => applyMultiStore(e.target.checked)}
+                />
+                <span>Multiple stores</span>
+              </label>
+            ) : null}
           </div>
           {!loading && categoryOptions.length > 0 ? (
             <div className="pos-category-bar" role="toolbar" aria-label="Filter by category">
@@ -2434,7 +2476,13 @@ export function PosPage() {
       </div>
 
       <Modal
-        title={workstationModalMode === "change" ? "Change register" : "Set up this register"}
+        title={
+          workstationModalMode === "change"
+            ? canChangeLocation
+              ? "Change register"
+              : "Change terminal"
+            : "Set up this register"
+        }
         isOpen={workstationModalMode != null}
         onClose={() => {
           if (workstationModalMode === "change") setWorkstationModalMode(null);
@@ -2463,8 +2511,9 @@ export function PosPage() {
         }
       >
         <p className="muted" style={{ marginTop: 0 }}>
-          Choose the branch (location) and terminal for this browser. The choice is stored locally until
-          you clear site data for this app.
+          {canChangeLocation
+            ? "Choose the branch (location) and terminal for this browser. The choice is stored locally until you clear site data for this app."
+            : "Choose the terminal at your assigned branch. The choice is stored locally until you clear site data for this app."}
         </p>
         {workstationFormError ? (
           <div className="alert alert-error" role="alert" style={{ marginBottom: 12 }}>
@@ -2480,6 +2529,7 @@ export function PosPage() {
               onChange={(e) => {
                 setWorkstationFormLocationId(e.target.value);
               }}
+              disabled={!canChangeLocation}
             >
               <option value="">— Select branch —</option>
               {locations.map((l) => (

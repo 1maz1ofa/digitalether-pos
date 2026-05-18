@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { getUserLocationId } from "../utils/userLocation";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -10,6 +12,9 @@ function qtyFmt(v) {
 }
 
 export function InventoryProductLocationsPage() {
+  const { user } = useAuth();
+  const userLocationId = getUserLocationId(user);
+
   const { productId: productIdParam } = useParams();
   const [searchParams] = useSearchParams();
   const productId = Number(productIdParam);
@@ -36,7 +41,12 @@ export function InventoryProductLocationsPage() {
     setLoading(true);
     try {
       const locations = await api.products.inventoryLocations(productId);
-      setRows(locations);
+      const rowsList = Array.isArray(locations) ? locations : [];
+      setRows(
+        userLocationId != null
+          ? rowsList.filter((r) => Number(r.location_id) === userLocationId)
+          : rowsList
+      );
     } catch (e) {
       setRows([]);
       setError(e.message || "Failed to load locations");

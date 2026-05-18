@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { getUserLocationId } from "../utils/userLocation";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -10,6 +12,9 @@ function qtyFmt(v) {
 }
 
 export function InventoryPage() {
+  const { user } = useAuth();
+  const userLocationId = useMemo(() => getUserLocationId(user), [user]);
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -19,14 +24,14 @@ export function InventoryPage() {
     setError("");
     setLoading(true);
     try {
-      const summary = await api.inventory.stockSummary();
+      const summary = await api.inventory.stockSummary(userLocationId ?? undefined);
       setRows(summary);
     } catch (e) {
       setError(e.message || "Failed to load inventory");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userLocationId]);
 
   useEffect(() => {
     load();
@@ -48,8 +53,9 @@ export function InventoryPage() {
         <div>
           <h1>Inventory</h1>
           <p className="page-lead">
-            Stock on hand per product across all locations. Click a quantity to see
-            reserved and promised amounts by location.
+            {userLocationId != null
+              ? "Stock on hand per product at your branch. Click a quantity to see reserved and promised amounts by location."
+              : "Stock on hand per product across all locations. Click a quantity to see reserved and promised amounts by location."}
           </p>
         </div>
         <button

@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AdminLayout } from "./layout/AdminLayout";
+import { LoginPage } from "./pages/LoginPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { CurrenciesPage } from "./pages/CurrenciesPage";
 import { CustomersPage } from "./pages/CustomersPage";
@@ -26,7 +28,15 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<AdminLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <AdminLayout />
+            </ProtectedRoute>
+          }
+        >
           <Route index element={<Navigate to="/pos" replace />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="categories" element={<CategoriesPage />} />

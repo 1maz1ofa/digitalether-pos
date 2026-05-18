@@ -1,8 +1,22 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  getUserLocationId,
+  enforceLocationAccess,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
+
+function reserveHeaderFilterSql(userLoc, paramIndex) {
+  if (userLoc == null) return "";
+  return ` AND EXISTS (
+    SELECT 1
+    FROM reserve_issue_items ri
+    JOIN inventory_promise ip ON ip.id = ri.promise_id
+    WHERE ri.header_id = h.id AND ip.from_location_id = $${paramIndex}
+  )`;
+}
 
 function safeText(value) {
   if (value === undefined || value === null) return null;
@@ -78,13 +92,17 @@ router.get("/", async (req, res) => {
     const invoiceNumber = safeText(req.query?.invoice_number);
 
     if (headerId) {
+      const userLoc = getUserLocationId(req.user);
+      const params = [headerId];
+      const locFilter = reserveHeaderFilterSql(userLoc, 2);
+      if (userLoc != null) params.push(userLoc);
       const { rows: headers } = await pool.query(
         `SELECT h.id, h.location_id, h.total_products, h.invoice_number, h.created_at,
                 loc.name AS location_name, loc.code AS location_code
          FROM reserve_issue_header h
          LEFT JOIN location loc ON loc.id = h.location_id
-         WHERE h.id = $1`,
-        [headerId]
+         WHERE h.id = $1${locFilter}`,
+        params
       );
       if (!headers.length) {
         return res.json({ header: null, items: [] });
@@ -95,14 +113,18 @@ router.get("/", async (req, res) => {
     }
 
     if (invoiceNumber) {
+      const userLoc = getUserLocationId(req.user);
+      const params = [invoiceNumber];
+      const locFilter = reserveHeaderFilterSql(userLoc, 2);
+      if (userLoc != null) params.push(userLoc);
       const { rows: headers } = await pool.query(
         `SELECT h.id, h.location_id, h.total_products, h.invoice_number, h.created_at,
                 loc.name AS location_name, loc.code AS location_code
          FROM reserve_issue_header h
          LEFT JOIN location loc ON loc.id = h.location_id
-         WHERE h.invoice_number = $1
+         WHERE h.invoice_number = $1${locFilter}
          ORDER BY h.id ASC`,
-        [invoiceNumber]
+        params
       );
       if (!headers.length) {
         return res.json({ queues: [], header: null, items: [] });
@@ -148,12 +170,18 @@ router.get("/", async (req, res) => {
       });
     }
 
+    const userLoc = getUserLocationId(req.user);
+    const params = [];
+    const locFilter = reserveHeaderFilterSql(userLoc, 1);
+    if (userLoc != null) params.push(userLoc);
     const { rows: headers } = await pool.query(
       `SELECT h.id, h.location_id, h.total_products, h.invoice_number, h.created_at,
               loc.name AS location_name, loc.code AS location_code
        FROM reserve_issue_header h
        LEFT JOIN location loc ON loc.id = h.location_id
-       ORDER BY h.created_at DESC NULLS LAST, h.id DESC`
+       WHERE 1=1${locFilter}
+       ORDER BY h.created_at DESC NULLS LAST, h.id DESC`,
+      params
     );
     if (!headers.length) {
       return res.json({ pending: [] });
@@ -303,6 +331,12 @@ router.post("/issue", async (req, res) => {
           "This reserve queue mixes multiple ship-from stores; split queues at checkout or re-create lines. " +
           "One issue may only deduct inventory at a single source location.",
       });
+    }
+
+    const shipFromLocationId = [...shipFromSet][0];
+    if (!enforceLocationAccess(req.user, shipFromLocationId, res)) {
+      await client.query("ROLLBACK");
+      return;
     }
 
     const movementTypeId = await ensureReserveOutMovementTypeId(client);

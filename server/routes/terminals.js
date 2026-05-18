@@ -1,6 +1,10 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const {
+  getUserLocationId,
+  sendLocationForbidden,
+} = require("../utils/userLocationScope");
 
 const router = express.Router();
 
@@ -59,8 +63,13 @@ function parseRequiredBigInt(val) {
 
 router.get("/", async (req, res) => {
   try {
+    const userLoc = getUserLocationId(req.user);
+    const params = [];
+    const where = userLoc != null ? "WHERE t.location_id = $1" : "";
+    if (userLoc != null) params.push(userLoc);
     const { rows } = await pool.query(
-      `${listSql} ORDER BY l.name NULLS LAST, l.code, t.name NULLS LAST, t.code`
+      `${listSql} ${where} ORDER BY l.name NULLS LAST, l.code, t.name NULLS LAST, t.code`,
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -76,6 +85,10 @@ router.get("/:id", async (req, res) => {
     }
     const { rows } = await pool.query(`${listSql} WHERE t.id = $1`, [id]);
     if (!rows.length) return res.status(404).json({ error: "Terminal not found" });
+    const userLoc = getUserLocationId(req.user);
+    if (userLoc != null && Number(rows[0].location_id) !== userLoc) {
+      return sendLocationForbidden(res);
+    }
     res.json(rows[0]);
   } catch (err) {
     sendPgError(res, err);
