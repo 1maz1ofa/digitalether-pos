@@ -96,6 +96,12 @@ async function ensureSaleMovementTypeId(client) {
   }
 }
 
+/**
+ * Sellable quantity at a branch:
+ *   on-hand + incoming promised − (outgoing promised + outgoing reserved)
+ * Incoming reserved (promised stock already earmarked for a sale) is excluded from
+ * incoming promised; outgoing reserved and promised both reduce what can be sold.
+ */
 async function getLocationProductSellabilityForUpdate(client, productId, locationId) {
   const inv = await client.query(
     `SELECT quantity
@@ -705,10 +711,10 @@ router.get("/htb/export", async (req, res) => {
 
 /**
  * POST /api/pos/checkout
- * Body: { location_id?, customer_id?, items: [{ product_id, quantity, location_id? }],
+ * Body: { location_id?, multi_store?, customer_id?, items: [{ product_id, quantity, location_id? }],
  *   optional HTB / D365: d365_credit_application_id?, d365_customer_guid?, d365_minimum_deposit? }
- * Each line may include location_id; otherwise body.location_id or branch_id (D365 GUID in .env) is mapped to a local
- * location by location.d365_id and used as the default.
+ * Stock is always validated and decremented at location_id (the register branch). Per-line location_id is only
+ * allowed when multi_store is true (for invoicing); sellable qty is on-hand − outgoing commitments + incoming promises.
  * Lines are grouped by resolved location: one completed invoice per distinct location.
  */
 router.post("/checkout", async (req, res) => {
@@ -839,6 +845,8 @@ router.post("/checkout", async (req, res) => {
       saleTypeId = Number(saleTypeRow.rows[0].id);
     }
 
+    const multiStoreMode = req.body?.multi_store === true;
+
     const pricedLines = [];
     for (const line of items) {
       const productId = parseInt(line?.product_id, 10);
@@ -863,6 +871,17 @@ router.post("/checkout", async (req, res) => {
       } else {
         return res.status(400).json({
           error: "location_id is required on the sale or on each line item",
+        });
+      }
+
+      if (
+        hasDefaultLocation &&
+        lineLocationId !== resolvedDefaultLocationId &&
+        !multiStoreMode
+      ) {
+        return res.status(400).json({
+          error:
+            "Each item must be sold from the register branch. Enable multiple stores on the POS to sell from another branch.",
         });
       }
 
@@ -1033,24 +1052,21 @@ router.post("/checkout", async (req, res) => {
     }
     profiler.lap("transaction_begin_and_htb_local_customer");
 
-    const requestedQtyByProductLocation = new Map();
+    const registerLocationId = resolvedDefaultLocationId;
+    const requestedQtyByProductAtRegister = new Map();
     for (const L of pricedLines) {
-      const key = `${L.productId}::${L.locationId}`;
-      requestedQtyByProductLocation.set(
-        key,
-        (requestedQtyByProductLocation.get(key) || 0) + Number(L.qty)
+      requestedQtyByProductAtRegister.set(
+        L.productId,
+        (requestedQtyByProductAtRegister.get(L.productId) || 0) + Number(L.qty)
       );
     }
     const promisedQtyConsumedByProductLocation = new Map();
     const pendingReserveByKey = new Map();
-    for (const [key, requestedQty] of requestedQtyByProductLocation.entries()) {
-      const [productIdText, locationIdText] = key.split("::");
-      const productId = Number(productIdText);
-      const locationId = Number(locationIdText);
+    for (const [productId, requestedQty] of requestedQtyByProductAtRegister.entries()) {
       const sellability = await getLocationProductSellabilityForUpdate(
         client,
         productId,
-        locationId
+        registerLocationId
       );
       if (requestedQty > sellability.sellable) {
         await client.query("ROLLBACK");
@@ -1058,7 +1074,7 @@ router.post("/checkout", async (req, res) => {
           error: "Not enough sellable quantity for one or more items at this location.",
           detail: {
             product_id: productId,
-            location_id: locationId,
+            location_id: registerLocationId,
             requested_quantity: requestedQty,
             sellable_quantity: sellability.sellable,
             on_hand_quantity: sellability.onHand,
@@ -1067,6 +1083,7 @@ router.post("/checkout", async (req, res) => {
           },
         });
       }
+      const stockKey = `${productId}::${registerLocationId}`;
       const neededFromIncomingPromises = Math.max(
         0,
         requestedQty + sellability.outgoingOutstanding - sellability.onHand
@@ -1075,12 +1092,12 @@ router.post("/checkout", async (req, res) => {
         const chunks = await reserveIncomingPromisesForSale(
           client,
           productId,
-          locationId,
+          registerLocationId,
           neededFromIncomingPromises
         );
-        pendingReserveByKey.set(key, cloneReserveAllocationQueue(chunks));
+        pendingReserveByKey.set(stockKey, cloneReserveAllocationQueue(chunks));
       }
-      promisedQtyConsumedByProductLocation.set(key, neededFromIncomingPromises);
+      promisedQtyConsumedByProductLocation.set(stockKey, neededFromIncomingPromises);
     }
     profiler.lap("inventory_sellability_checks_and_promise_reservations");
 
@@ -1212,7 +1229,7 @@ router.post("/checkout", async (req, res) => {
 
     const remainingPromisedQtyByProductLocation = new Map(promisedQtyConsumedByProductLocation);
     const totalOnHandQtySold = pricedLines.reduce((sum, line) => {
-      const key = `${line.productId}::${line.locationId}`;
+      const key = `${line.productId}::${registerLocationId}`;
       const promisedRemaining = Number(remainingPromisedQtyByProductLocation.get(key) || 0);
       const promisedForLine = Math.min(promisedRemaining, Number(line.qty));
       remainingPromisedQtyByProductLocation.set(
@@ -1280,17 +1297,17 @@ router.post("/checkout", async (req, res) => {
         const savedItem = itemRows[0];
         savedItems.push(savedItem);
 
-        const key = `${L.productId}::${locId}`;
-        const promisedRemaining = Number(remainingPromisedQtyByProductLocation.get(key) || 0);
+        const stockKey = `${L.productId}::${registerLocationId}`;
+        const promisedRemaining = Number(remainingPromisedQtyByProductLocation.get(stockKey) || 0);
         const promisedQtyForLine = Math.min(promisedRemaining, Number(L.qty));
         const qtyFromOnHand = Math.max(0, Number(L.qty) - promisedQtyForLine);
         remainingPromisedQtyByProductLocation.set(
-          key,
+          stockKey,
           Math.max(0, promisedRemaining - promisedQtyForLine)
         );
 
         if (promisedQtyForLine > 0) {
-          const queue = pendingReserveByKey.get(key);
+          const queue = pendingReserveByKey.get(stockKey);
           if (!queue || !queue.length) {
             await client.query("ROLLBACK");
             return res.status(500).json({
@@ -1329,7 +1346,7 @@ router.post("/checkout", async (req, res) => {
           `SELECT id FROM inventory
            WHERE product_id = $1 AND location_id = $2
            FOR UPDATE`,
-          [L.productId, locId]
+          [L.productId, registerLocationId]
         );
         if (stockedRows.length > 0) {
           const invId = Number(stockedRows[0].id);
@@ -1341,7 +1358,7 @@ router.post("/checkout", async (req, res) => {
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [
               L.productId,
-              locId,
+              registerLocationId,
               saleQty,
               L.unitCost,
               saleMovementTypeId,

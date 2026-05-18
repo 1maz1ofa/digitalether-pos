@@ -48,8 +48,8 @@ export function InventoryPage() {
         <div>
           <h1>Inventory</h1>
           <p className="page-lead">
-            On-hand quantity per product across all locations. Click a quantity
-            to open the locations page.
+            Stock on hand per product across all locations. Click a quantity to see
+            reserved and promised amounts by location.
           </p>
         </div>
         <button
@@ -94,7 +94,7 @@ export function InventoryPage() {
                   <th>Product</th>
                   <th>UoM</th>
                   <th>Locations</th>
-                  <th>Total quantity</th>
+                  <th>Stock on hand</th>
                 </tr>
               </thead>
               <tbody>
@@ -107,25 +107,31 @@ export function InventoryPage() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((r) => (
+                  filtered.map((r) => {
+                    const stock =
+                      Number(r.stock_on_hand ?? r.total_quantity ?? 0) || 0;
+                    return (
                     <tr key={r.product_id}>
                       <td>
                         {r.product_code ? <code>{r.product_code}</code> : "—"}
                       </td>
                       <td>{r.product_name || "—"}</td>
                       <td>{r.unit_of_measure || "—"}</td>
-                      <td>{Number(r.location_count || 0)}</td>
+                      <td>
+                        {stock > 0 ? Number(r.location_count || 0) : "—"}
+                      </td>
                       <td>
                         <Link
                           to={`/inventory/product/${encodeURIComponent(String(r.product_id))}`}
                           className="table-link"
                           title="Open per-location stock page"
                         >
-                          {qtyFmt(r.total_quantity)}
+                          {qtyFmt(r.stock_on_hand ?? r.total_quantity)}
                         </Link>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>

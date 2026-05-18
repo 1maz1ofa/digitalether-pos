@@ -35,8 +35,8 @@ export function InventoryProductLocationsPage() {
     setError("");
     setLoading(true);
     try {
-      const stock = await api.inventory.stock({ productId });
-      setRows(stock);
+      const locations = await api.products.inventoryLocations(productId);
+      setRows(locations);
     } catch (e) {
       setRows([]);
       setError(e.message || "Failed to load locations");
@@ -50,6 +50,7 @@ export function InventoryProductLocationsPage() {
   }, [load]);
 
   const title = rows[0]?.product_name || rows[0]?.product_code || `Product #${productId}`;
+  const productQs = productIdOk ? encodeURIComponent(String(productId)) : "";
 
   return (
     <div className="page">
@@ -66,13 +67,16 @@ export function InventoryProductLocationsPage() {
               <>
                 {title}
                 {" · "}
-                <Link to={`/products/${encodeURIComponent(String(productId))}`} className="table-link">
+                <Link to={`/products/${productQs}`} className="table-link">
                   open product
                 </Link>
               </>
             ) : (
               "Product locations"
             )}
+            {productIdOk ? (
+              <> · Reserved and promised quantities are shown per location.</>
+            ) : null}
           </p>
         </div>
         <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
@@ -97,14 +101,17 @@ export function InventoryProductLocationsPage() {
               <thead>
                 <tr>
                   <th>Location</th>
-                  <th>Quantity</th>
+                  <th>Stock on hand</th>
+                  <th>Reserved</th>
+                  <th>Out promised</th>
+                  <th>In promised</th>
                   <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr
-                    key={r.id}
+                    key={r.location_id}
                     style={
                       highlightOk && Number(r.location_id) === highlightLocationId
                         ? { background: "rgba(59, 130, 246, 0.12)" }
@@ -112,11 +119,34 @@ export function InventoryProductLocationsPage() {
                     }
                   >
                     <td>
-                      {r.location_code ? <code style={{ marginRight: "0.4rem" }}>{r.location_code}</code> : null}
+                      {r.location_code ? (
+                        <code style={{ marginRight: "0.4rem" }}>{r.location_code}</code>
+                      ) : null}
                       {r.location_name || "—"}
                     </td>
-                    <td>{qtyFmt(r.quantity)}</td>
-                    <td className="muted">{r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}</td>
+                    <td>{qtyFmt(r.stock_on_hand ?? r.total_quantity)}</td>
+                    <td>{qtyFmt(r.reserved_quantity)}</td>
+                    <td>
+                      <Link
+                        to={`/promises?location=${encodeURIComponent(String(r.location_id))}&product=${productQs}`}
+                        className="table-link"
+                        title="View outgoing promises from this location"
+                      >
+                        {qtyFmt(r.out_promised_quantity ?? r.promised_quantity)}
+                      </Link>
+                    </td>
+                    <td>
+                      <Link
+                        to={`/promises?product=${productQs}`}
+                        className="table-link"
+                        title="View promises for this product"
+                      >
+                        {qtyFmt(r.in_promised_quantity)}
+                      </Link>
+                    </td>
+                    <td className="muted">
+                      {r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

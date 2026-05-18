@@ -59,6 +59,20 @@ id_rsa.pub
 # =====================
 .eslintcache
 .stylelintcache
+.cache/
+**/.cache/
+*.pack
+index.pack
+index.pack.old
+
+# Create React App / webpack (inside node_modules; explicit for IDE git views)
+client/node_modules/.cache/
+**/babel-loader/
+
+# =====================
+# Local git helper output
+# =====================
+.ship-msg.txt
 *~
 *.swp
 *.swo

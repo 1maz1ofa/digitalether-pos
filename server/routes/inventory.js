@@ -179,7 +179,7 @@ router.get("/stock", async (req, res) => {
 });
 
 /**
- * Per-product on-hand totals across all locations.
+ * Per-product on-hand totals across all locations, plus promise aggregates.
  * Includes products with no inventory rows (total = 0) so the catalog is fully visible.
  */
 router.get("/stock/summary", async (req, res) => {
@@ -191,10 +191,23 @@ router.get("/stock/summary", async (req, res) => {
               p.unit_of_measure,
               p.is_active,
               COALESCE(SUM(i.quantity), 0)::numeric AS total_quantity,
-              COUNT(i.id) FILTER (WHERE i.quantity IS NOT NULL) AS location_count
+              COALESCE(SUM(i.quantity), 0)::numeric AS stock_on_hand,
+              COUNT(i.id) FILTER (WHERE i.quantity IS NOT NULL) AS location_count,
+              COALESCE(pr.sum_reserved, 0)::numeric AS reserved_quantity,
+              COALESCE(pr.sum_out_promised, 0)::numeric AS out_promised_quantity,
+              COALESCE(pr.sum_in_promised, 0)::numeric AS in_promised_quantity
        FROM product p
        LEFT JOIN inventory i ON i.product_id = p.id
-       GROUP BY p.id, p.code, p.name, p.unit_of_measure, p.is_active
+       LEFT JOIN (
+         SELECT product_id,
+                SUM(COALESCE(reserved_quantity, 0))::numeric AS sum_reserved,
+                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_out_promised,
+                SUM(COALESCE(promised_quantity, 0))::numeric AS sum_in_promised
+         FROM inventory_promise
+         GROUP BY product_id
+       ) pr ON pr.product_id = p.id
+       GROUP BY p.id, p.code, p.name, p.unit_of_measure, p.is_active,
+                pr.sum_reserved, pr.sum_out_promised, pr.sum_in_promised
        ORDER BY p.name NULLS LAST, p.code NULLS LAST, p.id`
     );
     res.json(rows);

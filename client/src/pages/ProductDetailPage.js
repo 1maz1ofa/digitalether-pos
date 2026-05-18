@@ -24,14 +24,6 @@ function vatLabel(row) {
   return "—";
 }
 
-function locationLabel(row) {
-  const name = row.location_name || row.location_code;
-  if (name && row.location_code && row.location_name) {
-    return `${row.location_name} (${row.location_code})`;
-  }
-  return name || "—";
-}
-
 export function ProductDetailPage() {
   const { id: idParam } = useParams();
   const id = Number(idParam);
@@ -139,7 +131,7 @@ export function ProductDetailPage() {
               Stock by location
             </h2>
             <p className="muted" style={{ marginTop: 0, marginBottom: "1rem" }}>
-              On-hand quantity, outgoing promised quantity, and reserved quantity from each location.
+              Reserved and promised quantities are shown per location.
             </p>
             {locations.length === 0 ? (
               <p className="muted">No stock or promises for this product at any location yet.</p>
@@ -149,34 +141,53 @@ export function ProductDetailPage() {
                   <thead>
                     <tr>
                       <th>Location</th>
-                      <th>Total quantity</th>
-                      <th>Quantity promised</th>
-                      <th>Quantity reserved</th>
+                      <th>Stock on hand</th>
+                      <th>Reserved</th>
+                      <th>Out promised</th>
+                      <th>In promised</th>
+                      <th>Updated</th>
                     </tr>
                   </thead>
                   <tbody>
                     {locations.map((row) => (
                       <tr key={row.location_id}>
-                        <td>{locationLabel(row)}</td>
+                        <td>
+                          {row.location_code ? (
+                            <code style={{ marginRight: "0.4rem" }}>{row.location_code}</code>
+                          ) : null}
+                          {row.location_name || "—"}
+                        </td>
                         <td>
                           <Link
                             to={`/inventory/product/${encodeURIComponent(String(id))}?locationId=${encodeURIComponent(String(row.location_id))}`}
                             className="table-link"
                             title="View on-hand quantity for this branch"
                           >
-                            {qtyFmt(row.total_quantity)}
+                            {qtyFmt(row.stock_on_hand ?? row.total_quantity)}
                           </Link>
                         </td>
+                        <td>{qtyFmt(row.reserved_quantity)}</td>
                         <td>
                           <Link
                             to={`/promises?location=${encodeURIComponent(String(row.location_id))}&product=${encodeURIComponent(String(id))}`}
                             className="table-link"
                             title="View outgoing promises from this branch for this product"
                           >
-                            {qtyFmt(row.promised_quantity)}
+                            {qtyFmt(row.out_promised_quantity ?? row.promised_quantity)}
                           </Link>
                         </td>
-                        <td>{qtyFmt(row.reserved_quantity)}</td>
+                        <td>
+                          <Link
+                            to={`/promises?product=${encodeURIComponent(String(id))}`}
+                            className="table-link"
+                            title="View promises for this product"
+                          >
+                            {qtyFmt(row.in_promised_quantity)}
+                          </Link>
+                        </td>
+                        <td className="muted">
+                          {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

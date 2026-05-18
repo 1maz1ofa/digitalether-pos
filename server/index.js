@@ -23,6 +23,7 @@ const invoicesRouter = require("./routes/invoices");
 const inventoryRouter = require("./routes/inventory");
 const inventoryPromisesRouter = require("./routes/inventoryPromises");
 const reserveIssueRouter = require("./routes/reserveIssue");
+const stocktakeRouter = require("./routes/stocktake");
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use("/api/terminals", terminalsRouter);
 app.use("/api/invoices", invoicesRouter);
 app.use("/api/inventory/promises", inventoryPromisesRouter);
 app.use("/api/inventory/reserve-issues", reserveIssueRouter);
+app.use("/api/stocktakes", stocktakeRouter);
 app.use("/api/inventory", inventoryRouter);
 
 // ✅ Database test route

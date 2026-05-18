@@ -311,4 +311,54 @@ export const api = {
       },
     },
   },
+  stocktakes: {
+    list: (opts = {}) => {
+      const params = new URLSearchParams();
+      const loc = opts.locationId ?? opts.location_id;
+      const status = opts.status;
+      if (loc != null && String(loc).trim() !== "") {
+        params.set("location_id", String(loc).trim());
+      }
+      if (status != null && String(status).trim() !== "") {
+        params.set("status", String(status).trim());
+      }
+      const q = params.toString() ? `?${params.toString()}` : "";
+      return apiRequest(`/api/stocktakes${q}`);
+    },
+    get: (id) => apiRequest(`/api/stocktakes/${encodeURIComponent(String(id))}`),
+    create: (data) =>
+      apiRequest("/api/stocktakes", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/stocktakes/${encodeURIComponent(String(id))}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/stocktakes/${encodeURIComponent(String(id))}`, { method: "DELETE" }),
+    populateFromStock: (id, data = {}) =>
+      apiRequest(`/api/stocktakes/${encodeURIComponent(String(id))}/populate-from-stock`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    addDetail: (stocktakeId, data) =>
+      apiRequest(
+        `/api/stocktakes/${encodeURIComponent(String(stocktakeId))}/details`,
+        { method: "POST", body: JSON.stringify(data) }
+      ),
+    updateDetail: (stocktakeId, detailId, data) =>
+      apiRequest(
+        `/api/stocktakes/${encodeURIComponent(String(stocktakeId))}/details/${encodeURIComponent(String(detailId))}`,
+        { method: "PUT", body: JSON.stringify(data) }
+      ),
+    removeDetail: (stocktakeId, detailId) =>
+      apiRequest(
+        `/api/stocktakes/${encodeURIComponent(String(stocktakeId))}/details/${encodeURIComponent(String(detailId))}`,
+        { method: "DELETE" }
+      ),
+    confirm: (id, data = {}) =>
+      apiRequest(`/api/stocktakes/${encodeURIComponent(String(id))}/confirm`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
 };

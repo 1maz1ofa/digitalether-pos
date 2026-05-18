@@ -16,6 +16,8 @@ import { ProductDetailPage } from "./pages/ProductDetailPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { PosPage } from "./pages/PosPage";
 import { VatPage } from "./pages/VatPage";
+import { StocktakesPage } from "./pages/StocktakesPage";
+import { StocktakeDetailPage } from "./pages/StocktakeDetailPage";
 import "./App.css";
 
 function App() {
@@ -33,6 +35,9 @@ function App() {
           <Route path="movement/new" element={<MovementNewPage />} />
           <Route path="movement" element={<MovementPage />} />
           <Route path="inventory" element={<InventoryPage />} />
+          <Route path="stocktakes/new" element={<StocktakeDetailPage />} />
+          <Route path="stocktakes/:id" element={<StocktakeDetailPage />} />
+          <Route path="stocktakes" element={<StocktakesPage />} />
           <Route path="inventory/product/:productId" element={<InventoryProductLocationsPage />} />
           <Route path="promises" element={<InventoryPromisesPage />} />
           <Route path="reserve-issue" element={<ReserveIssuePage />} />

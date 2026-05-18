@@ -10,6 +10,7 @@ import { clearPosWorkstation, readPosWorkstation, writePosWorkstation } from "..
 
 const MULTI_STORE_STORAGE_KEY = "de-pos-multi-store";
 const HTB_CREDIT_SELECTION_STORAGE_KEY = "de-pos-htb-credit-selection";
+const POS_ERROR_DISMISS_MS = 5000;
 
 function readStoredHtbCreditSelection() {
   if (typeof window === "undefined") return null;
@@ -96,6 +97,18 @@ function formatOnHandQty(value) {
   if (!Number.isFinite(n)) return "—";
   if (Number.isInteger(n)) return String(n);
   return String(Number(n.toFixed(4)));
+}
+
+/**
+ * Same rule as product detail stock-by-location (`/products/:id/inventory-locations`):
+ * on-hand minus outgoing promised minus outgoing reserved for that branch
+ * (`inventory_promise` rows with `from_location_id` = that location).
+ */
+function quantityAvailable(total, outgoingPromised, outgoingReserved) {
+  const t = Number.isFinite(Number(total)) ? Number(total) : 0;
+  const p = Number.isFinite(Number(outgoingPromised)) ? Number(outgoingPromised) : 0;
+  const r = Number.isFinite(Number(outgoingReserved)) ? Number(outgoingReserved) : 0;
+  return t - p - r;
 }
 
 function normalizedVatPercentage(value) {
@@ -449,10 +462,16 @@ export function PosPage() {
   const [saleLocationStockByProductId, setSaleLocationStockByProductId] = useState(
     () => new Map()
   );
-  /** Promised quantity to the POS default branch (product id → qty). */
+  /** Quantity other branches have promised *to* this POS branch (product id → qty). */
   const [saleLocationPromisedByProductId, setSaleLocationPromisedByProductId] = useState(
     () => new Map()
   );
+  /** Outgoing promised from the POS default branch (product id → qty). */
+  const [saleLocationOutgoingPromisedByProductId, setSaleLocationOutgoingPromisedByProductId] =
+    useState(() => new Map());
+  /** Outgoing reserved on promises from the POS default branch (product id → qty). */
+  const [saleLocationOutgoingReservedByProductId, setSaleLocationOutgoingReservedByProductId] =
+    useState(() => new Map());
   /**
    * Promised source locations for the POS default branch
    * (product id → [{ locationId, quantity }]).
@@ -490,6 +509,18 @@ export function PosPage() {
       window.clearInterval(id);
     };
   }, [checkoutLoading]);
+
+  useEffect(() => {
+    if (!error || paymentModalOpen) return undefined;
+    const id = window.setTimeout(() => setError(""), POS_ERROR_DISMISS_MS);
+    return () => window.clearTimeout(id);
+  }, [error, paymentModalOpen]);
+
+  useEffect(() => {
+    if (!paymentError || !paymentModalOpen) return undefined;
+    const id = window.setTimeout(() => setPaymentError(""), POS_ERROR_DISMISS_MS);
+    return () => window.clearTimeout(id);
+  }, [paymentError, paymentModalOpen]);
 
   const load = useCallback(async () => {
     setError("");
@@ -866,6 +897,8 @@ export function PosPage() {
     if (!hasActiveDefaultLocation || defaultLocationId == null) {
       setSaleLocationStockByProductId(new Map());
       setSaleLocationPromisedByProductId(new Map());
+      setSaleLocationOutgoingPromisedByProductId(new Map());
+      setSaleLocationOutgoingReservedByProductId(new Map());
       setSaleLocationPromiseSourcesByProductId(new Map());
       return;
     }
@@ -882,36 +915,116 @@ export function PosPage() {
         next.set(pid, Number.isFinite(q) ? q : 0);
       }
       setSaleLocationStockByProductId(next);
-      const promisedNext = new Map();
+      const incomingPromisedNext = new Map();
+      const outgoingPromisedNext = new Map();
+      const outgoingReservedNext = new Map();
       const promisedSourcesNext = new Map();
       for (const row of Array.isArray(promiseRows) ? promiseRows : []) {
-        const toLoc = toPositiveInt(row.to_location_id);
-        if (toLoc !== defaultLocationId) continue;
         const pid = toPositiveInt(row.product_id);
         if (pid == null) continue;
         const fromLoc = toPositiveInt(row.from_location_id);
-        if (fromLoc == null) continue;
+        const toLoc = toPositiveInt(row.to_location_id);
         const promisedQ = Number(row.promised_quantity);
-        const q = Math.max(0, Number.isFinite(promisedQ) ? promisedQ : 0);
-        if (q <= 0) continue;
-        promisedNext.set(pid, (promisedNext.get(pid) || 0) + q);
-        const sourceRows = promisedSourcesNext.get(pid) || [];
-        const existingSource = sourceRows.find((x) => x.locationId === fromLoc);
-        if (existingSource) {
-          existingSource.quantity += q;
-        } else {
-          sourceRows.push({ locationId: fromLoc, quantity: q });
+        const pq = Math.max(0, Number.isFinite(promisedQ) ? promisedQ : 0);
+        const reservedQ = Number(row.reserved_quantity);
+        const rq = Math.max(0, Number.isFinite(reservedQ) ? reservedQ : 0);
+
+        if (fromLoc === defaultLocationId) {
+          outgoingPromisedNext.set(pid, (outgoingPromisedNext.get(pid) || 0) + pq);
+          if (rq > 0) {
+            outgoingReservedNext.set(pid, (outgoingReservedNext.get(pid) || 0) + rq);
+          }
         }
-        promisedSourcesNext.set(pid, sourceRows);
+
+        if (toLoc === defaultLocationId && fromLoc != null) {
+          if (pq > 0) {
+            incomingPromisedNext.set(pid, (incomingPromisedNext.get(pid) || 0) + pq);
+            const sourceRows = promisedSourcesNext.get(pid) || [];
+            const existingSource = sourceRows.find((x) => x.locationId === fromLoc);
+            if (existingSource) {
+              existingSource.quantity += pq;
+            } else {
+              sourceRows.push({ locationId: fromLoc, quantity: pq });
+            }
+            promisedSourcesNext.set(pid, sourceRows);
+          }
+        }
       }
-      setSaleLocationPromisedByProductId(promisedNext);
+      setSaleLocationPromisedByProductId(incomingPromisedNext);
+      setSaleLocationOutgoingPromisedByProductId(outgoingPromisedNext);
+      setSaleLocationOutgoingReservedByProductId(outgoingReservedNext);
       setSaleLocationPromiseSourcesByProductId(promisedSourcesNext);
     } catch {
       setSaleLocationStockByProductId(new Map());
       setSaleLocationPromisedByProductId(new Map());
+      setSaleLocationOutgoingPromisedByProductId(new Map());
+      setSaleLocationOutgoingReservedByProductId(new Map());
       setSaleLocationPromiseSourcesByProductId(new Map());
     }
   }, [defaultLocationId, hasActiveDefaultLocation]);
+
+  /**
+   * Max units sellable at this register’s branch:
+   * on-hand − outgoing promised − outgoing reserved + incoming promised.
+   */
+  const maxSaleBranchQtyForProduct = useCallback(
+    (productId) => {
+      const pid = toPositiveInt(productId);
+      if (pid == null) return 0;
+      const stock = Number(saleLocationStockByProductId.get(pid) ?? 0);
+      const outProm = Number(saleLocationOutgoingPromisedByProductId.get(pid) ?? 0);
+      const outRes = Number(saleLocationOutgoingReservedByProductId.get(pid) ?? 0);
+      const localSellable = Math.max(0, quantityAvailable(stock, outProm, outRes));
+      const incoming = Number(saleLocationPromisedByProductId.get(pid) ?? 0);
+      const inc = Number.isFinite(incoming) ? incoming : 0;
+      return Math.max(0, localSellable + inc);
+    },
+    [
+      saleLocationStockByProductId,
+      saleLocationOutgoingPromisedByProductId,
+      saleLocationOutgoingReservedByProductId,
+      saleLocationPromisedByProductId,
+    ]
+  );
+
+  /** In multi-store mode, cap per source branch to open promised qty to this POS branch. */
+  const maxPromisedQtyFromSource = useCallback(
+    (productId, fromLocationId) => {
+      const pid = toPositiveInt(productId);
+      const fromLoc = toPositiveInt(fromLocationId);
+      if (pid == null || fromLoc == null) return 0;
+      const sources = saleLocationPromiseSourcesByProductId.get(pid) || [];
+      const row = sources.find((x) => x.locationId === fromLoc);
+      const q = row?.quantity;
+      return Math.max(0, Number.isFinite(Number(q)) ? Number(q) : 0);
+    },
+    [saleLocationPromiseSourcesByProductId]
+  );
+
+  const maxLineQuantity = useCallback(
+    (line, cartSnapshot) => {
+      const pid = toPositiveInt(line?.product_id);
+      if (pid == null) return 0;
+      if (multiStore && line?.location_id != null) {
+        const fromLoc = toPositiveInt(line.location_id);
+        if (fromLoc == null) return 0;
+        const cap = maxPromisedQtyFromSource(pid, fromLoc);
+        let otherQty = 0;
+        for (const l of cartSnapshot.values()) {
+          if (l.cart_key === line.cart_key) continue;
+          if (
+            toPositiveInt(l.product_id) === pid &&
+            toPositiveInt(l.location_id) === fromLoc
+          ) {
+            otherQty += Number(l.quantity) || 0;
+          }
+        }
+        return Math.max(0, cap - otherQty);
+      }
+      return maxSaleBranchQtyForProduct(pid);
+    },
+    [maxPromisedQtyFromSource, maxSaleBranchQtyForProduct, multiStore]
+  );
 
   const applyWorkstationFromForm = useCallback(async () => {
     setWorkstationFormError("");
@@ -983,8 +1096,11 @@ export function PosPage() {
       if (pid == null) return null;
       const requestedQty = Number(quantity);
       if (!Number.isFinite(requestedQty) || requestedQty <= 0) return null;
-      const availableQty = Number(saleLocationStockByProductId.get(pid) ?? 0);
-      if (requestedQty <= Math.max(0, availableQty)) return null;
+      const stock = Number(saleLocationStockByProductId.get(pid) ?? 0);
+      const outProm = Number(saleLocationOutgoingPromisedByProductId.get(pid) ?? 0);
+      const outRes = Number(saleLocationOutgoingReservedByProductId.get(pid) ?? 0);
+      const localSellable = Math.max(0, quantityAvailable(stock, outProm, outRes));
+      if (requestedQty <= localSellable) return null;
       const sources = saleLocationPromiseSourcesByProductId.get(pid) || [];
       if (!sources.length) return null;
       const labels = sources
@@ -997,6 +1113,8 @@ export function PosPage() {
     [
       hasActiveDefaultLocation,
       locationNameById,
+      saleLocationOutgoingPromisedByProductId,
+      saleLocationOutgoingReservedByProductId,
       saleLocationPromiseSourcesByProductId,
       saleLocationStockByProductId,
     ]
@@ -1265,14 +1383,8 @@ export function PosPage() {
     setLastReceipt(null);
     const key = cartKey(product.id, null, false);
     const productId = toPositiveInt(product.id);
-    const availableQty =
-      productId == null ? 0 : Number(saleLocationStockByProductId.get(productId) ?? 0);
-    const promisedQty =
-      productId == null ? 0 : Number(saleLocationPromisedByProductId.get(productId) ?? 0);
-    const limit = Math.max(
-      0,
-      (Number.isFinite(availableQty) ? availableQty : 0) + (Number.isFinite(promisedQty) ? promisedQty : 0)
-    );
+    const limit =
+      productId == null ? 0 : maxSaleBranchQtyForProduct(productId);
     if (hasActiveDefaultLocation && Number.isFinite(limit) && limit <= 0) {
       setError(`No stock available for ${product.name}.`);
       return;
@@ -1321,15 +1433,29 @@ export function PosPage() {
     const key = cartKey(product.id, locId, true);
     const locLabel = locationNameById.get(locId) || `Store #${locId}`;
     setCart((prev) => {
+      const limitLine = {
+        cart_key: key,
+        product_id: product.id,
+        location_id: locId,
+        quantity: 0,
+      };
+      const limit = maxLineQuantity(limitLine, prev);
+      const existing = prev.get(key);
+      const nextQty = (existing?.quantity || 0) + 1;
+      if (Number.isFinite(limit) && nextQty > limit) {
+        setError(
+          `${product.name}: quantity cannot exceed promised from ${locLabel} (${formatOnHandQty(limit)}).`
+        );
+        return prev;
+      }
       const next = new Map(prev);
-      const existing = next.get(key);
       const unitPrice = Number(product.unit_price);
       const vatPercentage = normalizedVatPercentage(product.vat_percentage);
       if (existing) {
         next.set(key, {
           ...existing,
           vat_percentage: vatPercentage,
-          quantity: existing.quantity + 1,
+          quantity: nextQty,
         });
       } else {
         next.set(key, {
@@ -1403,25 +1529,20 @@ export function PosPage() {
       const next = new Map(prev);
       const line = next.get(lineKey);
       if (!line) return prev;
-      if (!multiStore && hasActiveDefaultLocation) {
-        const pid = toPositiveInt(line.product_id);
-        const availableQty =
-          pid == null ? 0 : Number(saleLocationStockByProductId.get(pid) ?? 0);
-        const promisedQty =
-          pid == null ? 0 : Number(saleLocationPromisedByProductId.get(pid) ?? 0);
-        const limit = Math.max(
-          0,
-          (Number.isFinite(availableQty) ? availableQty : 0) +
-            (Number.isFinite(promisedQty) ? promisedQty : 0)
-        );
+      if (hasActiveDefaultLocation) {
+        const limit = maxLineQuantity(line, prev);
         if (Number.isFinite(limit) && n > limit) {
           setError(
-            `${line.name}: quantity cannot exceed available + promised (${formatOnHandQty(limit)}).`
+            multiStore && line.location_id != null
+              ? `${line.name}: quantity cannot exceed promised from that store (${formatOnHandQty(limit)}).`
+              : `${line.name}: quantity cannot exceed available + promised (${formatOnHandQty(limit)}).`
           );
           next.set(lineKey, {
             ...line,
             quantity: limit,
-            promised_location_label: promisedLocationLabelForLine(line.product_id, limit),
+            promised_location_label: multiStore
+              ? line.promised_location_label
+              : promisedLocationLabelForLine(line.product_id, limit),
           });
           return next;
         }
@@ -1499,6 +1620,7 @@ export function PosPage() {
               terminal_id: posTerminalId,
             }
           : {}),
+        multi_store: multiStore,
         items: cartLines.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
@@ -2031,27 +2153,26 @@ export function PosPage() {
                   </span>
                   <span className="pos-product-tile-body">
                     <span className="pos-product-name">{p.name}</span>
-                    {hasActiveDefaultLocation ? (
-                      <span
-                        className={`pos-product-stock${
-                          (saleLocationStockByProductId.get(Number(p.id)) ?? 0) <= 0
-                            ? " pos-product-stock--none"
-                            : ""
-                        }`}
-                        title={
-                          headerBranchName
-                            ? `Available quantity at ${headerBranchName}`
-                            : "Available quantity at this location"
-                        }
-                      >
-                        Avail: {formatOnHandQty(saleLocationStockByProductId.get(Number(p.id)) ?? 0)}
-                      </span>
-                    ) : null}
-                    {hasActiveDefaultLocation ? (
-                      <span className="pos-product-stock" title="Promised quantity to this location">
-                        Prom: {formatOnHandQty(saleLocationPromisedByProductId.get(Number(p.id)) ?? 0)}
-                      </span>
-                    ) : null}
+                    {hasActiveDefaultLocation ? (() => {
+                      const pid = Number(p.id);
+                      const inStore = Number(saleLocationStockByProductId.get(pid) ?? 0);
+                      const promised = Number(saleLocationPromisedByProductId.get(pid) ?? 0);
+                      const promisedQty = Number.isFinite(promised) ? Math.max(0, promised) : 0;
+                      const inStoreQty = Number.isFinite(inStore) ? Math.max(0, inStore) : 0;
+                      const branchHint = headerBranchName
+                        ? ` at ${headerBranchName}`
+                        : " at this branch";
+                      const hasStock = inStoreQty > 0 || promisedQty > 0;
+                      return (
+                        <span
+                          className={`pos-product-stock${hasStock ? "" : " pos-product-stock--none"}`}
+                          title={`In store${branchHint}: on-hand quantity physically held at this branch. Promised: quantity other branches have committed to send here (not yet received).`}
+                        >
+                          <span>In store: {formatOnHandQty(inStoreQty)}</span>
+                          <span>Promised: {formatOnHandQty(promisedQty)}</span>
+                        </span>
+                      );
+                    })() : null}
                     <span className="pos-product-meta">
                       <span className="pos-product-price">{money(p.unit_price)}</span>
                       <code className="pos-product-code">{p.code}</code>
@@ -2213,12 +2334,8 @@ export function PosPage() {
                         min="1"
                         step="1"
                         max={
-                          !multiStore && hasActiveDefaultLocation
-                            ? Math.max(
-                                0,
-                                Number(saleLocationStockByProductId.get(Number(line.product_id)) ?? 0) +
-                                  Number(saleLocationPromisedByProductId.get(Number(line.product_id)) ?? 0)
-                              )
+                          hasActiveDefaultLocation
+                            ? Math.max(0, maxLineQuantity(line, cart))
                             : undefined
                         }
                         value={line.quantity}
@@ -2464,18 +2581,20 @@ export function PosPage() {
                   const locLabel = l.name || l.code || `Location #${l.id}`;
                   const lid = Number(l.id);
                   let totalText;
+                  let totalNum = 0;
                   if (pickProductStockStatus === "loading") {
                     totalText = "…";
                   } else if (pickProductStockStatus === "error") {
                     totalText = "—";
                   } else {
-                    totalText = formatOnHandQty(
-                      pickProductStockByLoc.get(lid) ?? 0
-                    );
+                    const rawTotal = pickProductStockByLoc.get(lid);
+                    totalNum = Number.isFinite(Number(rawTotal)) ? Number(rawTotal) : 0;
+                    totalText = formatOnHandQty(totalNum);
                   }
                   let promisedText;
                   let promisedQty = 0;
                   let reservedText;
+                  let reservedQty = 0;
                   if (pickProductPromisesStatus === "loading") {
                     promisedText = "…";
                     reservedText = "…";
@@ -2487,10 +2606,22 @@ export function PosPage() {
                     promisedQty = Number.isFinite(Number(raw)) ? Number(raw) : 0;
                     promisedText = formatOnHandQty(promisedQty);
                     const reservedRaw = pickProductReservedByLoc.get(lid);
-                    const reservedQty = Number.isFinite(Number(reservedRaw))
-                      ? Number(reservedRaw)
-                      : 0;
+                    reservedQty = Number.isFinite(Number(reservedRaw)) ? Number(reservedRaw) : 0;
                     reservedText = formatOnHandQty(reservedQty);
+                  }
+                  let availableText;
+                  if (
+                    pickProductStockStatus === "loading" ||
+                    pickProductPromisesStatus === "loading"
+                  ) {
+                    availableText = "…";
+                  } else if (
+                    pickProductStockStatus === "error" ||
+                    pickProductPromisesStatus === "error"
+                  ) {
+                    availableText = "—";
+                  } else {
+                    availableText = formatOnHandQty(quantityAvailable(totalNum, promisedQty, reservedQty));
                   }
                   const isReady =
                     pickProductPromisesStatus === "ready" ||
@@ -2502,7 +2633,8 @@ export function PosPage() {
                       value={String(l.id)}
                       disabled={isDisabled}
                     >
-                      {locLabel} (Total: {totalText} · Promised: {promisedText} · Reserved: {reservedText})
+                      {locLabel} (Total quantity: {totalText} · Quantity promised: {promisedText} ·
+                      Quantity reserved: {reservedText} · Quantity available: {availableText})
                     </option>
                   );
                 })}

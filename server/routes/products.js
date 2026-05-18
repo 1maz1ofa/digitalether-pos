@@ -82,9 +82,10 @@ router.get("/", async (req, res) => {
 });
 
 /**
- * Locations where this product has inventory and/or outgoing promises.
- * promised_quantity is the total promised from each location (inventory_promise.from_location_id).
- * reserved_quantity is the total reserved from each location (inventory_promise.from_location_id).
+ * Locations where this product has inventory and/or promises.
+ * promised_quantity / out_promised_quantity: outgoing from location (from_location_id).
+ * in_promised_quantity: incoming to location (to_location_id).
+ * reserved_quantity: reserved on outgoing promises from each location.
  */
 router.get("/:id/inventory-locations", async (req, res) => {
   try {
@@ -100,11 +101,18 @@ router.get("/:id/inventory-locations", async (req, res) => {
       `SELECT l.id AS location_id,
               l.code AS location_code,
               l.name AS location_name,
+              p.code AS product_code,
+              p.name AS product_name,
               COALESCE(i.quantity, 0)::numeric AS total_quantity,
+              COALESCE(i.quantity, 0)::numeric AS stock_on_hand,
+              i.updated_at,
               COALESCE(pr.sum_promised, 0)::numeric AS promised_quantity,
+              COALESCE(pr.sum_promised, 0)::numeric AS out_promised_quantity,
+              COALESCE(pi.sum_in_promised, 0)::numeric AS in_promised_quantity,
               COALESCE(pr.sum_reserved, 0)::numeric AS reserved_quantity
-       FROM location l
-       LEFT JOIN inventory i ON i.location_id = l.id AND i.product_id = $1
+       FROM product p
+       CROSS JOIN location l
+       LEFT JOIN inventory i ON i.location_id = l.id AND i.product_id = p.id
        LEFT JOIN (
          SELECT from_location_id,
                 SUM(promised_quantity)::numeric AS sum_promised,
@@ -113,9 +121,20 @@ router.get("/:id/inventory-locations", async (req, res) => {
          WHERE product_id = $1
          GROUP BY from_location_id
        ) pr ON pr.from_location_id = l.id
-       WHERE i.id IS NOT NULL
-          OR COALESCE(pr.sum_promised, 0) <> 0
-          OR COALESCE(pr.sum_reserved, 0) <> 0
+       LEFT JOIN (
+         SELECT to_location_id,
+                SUM(promised_quantity)::numeric AS sum_in_promised
+         FROM inventory_promise
+         WHERE product_id = $1
+         GROUP BY to_location_id
+       ) pi ON pi.to_location_id = l.id
+       WHERE p.id = $1
+         AND (
+           COALESCE(i.quantity, 0) > 0
+           OR COALESCE(pr.sum_promised, 0) > 0
+           OR COALESCE(pr.sum_reserved, 0) > 0
+           OR COALESCE(pi.sum_in_promised, 0) > 0
+         )
        ORDER BY l.name NULLS LAST, l.code NULLS LAST, l.id`,
       [id]
     );
