@@ -3,6 +3,8 @@ import { AdminLayout } from "./layout/AdminLayout";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { CurrenciesPage } from "./pages/CurrenciesPage";
 import { CustomersPage } from "./pages/CustomersPage";
+import { UsersPage } from "./pages/UsersPage";
+import { RolesPage } from "./pages/RolesPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { InventoryProductLocationsPage } from "./pages/InventoryProductLocationsPage";
 import { InventoryPromisesPage } from "./pages/InventoryPromisesPage";
@@ -43,6 +45,8 @@ function App() {
           <Route path="reserve-issue" element={<ReserveIssuePage />} />
           <Route path="movement-types" element={<MovementTypesPage />} />
           <Route path="customers" element={<CustomersPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="roles" element={<RolesPage />} />
           <Route path="invoices" element={<InvoicesPage />} />
           <Route path="vat" element={<VatPage />} />
         </Route>

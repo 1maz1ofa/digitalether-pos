@@ -115,6 +115,66 @@ export const api = {
         method: "DELETE",
       }),
   },
+  users: {
+    list: () => apiRequest("/api/users"),
+    get: (id) => apiRequest(`/api/users/${encodeURIComponent(String(id))}`),
+    create: (data) =>
+      apiRequest("/api/users", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/users/${encodeURIComponent(String(id))}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/users/${encodeURIComponent(String(id))}`, {
+        method: "DELETE",
+      }),
+  },
+  roles: {
+    list: () => apiRequest("/api/roles"),
+    get: (id) => apiRequest(`/api/roles/${encodeURIComponent(String(id))}`),
+    create: (data) =>
+      apiRequest("/api/roles", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/roles/${encodeURIComponent(String(id))}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/roles/${encodeURIComponent(String(id))}`, {
+        method: "DELETE",
+      }),
+  },
+  rights: {
+    schemaTables: () => apiRequest("/api/rights/schema/tables"),
+    schemaColumns: (table) =>
+      apiRequest(
+        `/api/rights/schema/tables/${encodeURIComponent(String(table).trim())}/columns`
+      ),
+    list: (roleId) => {
+      const params = new URLSearchParams();
+      if (roleId != null && String(roleId).trim() !== "") {
+        params.set("role_id", String(roleId).trim());
+      }
+      const q = params.toString() ? `?${params.toString()}` : "";
+      return apiRequest(`/api/rights${q}`);
+    },
+    get: (id) => apiRequest(`/api/rights/${encodeURIComponent(String(id))}`),
+    create: (data) =>
+      apiRequest("/api/rights", { method: "POST", body: JSON.stringify(data) }),
+    update: (id, data) =>
+      apiRequest(`/api/rights/${encodeURIComponent(String(id))}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      apiRequest(`/api/rights/${encodeURIComponent(String(id))}`, {
+        method: "DELETE",
+      }),
+  },
+  userRoles: {
+    list: () => apiRequest("/api/user-roles"),
+  },
   customers: {
     list: () => apiRequest("/api/customers"),
     get: (id) => apiRequest(`/api/customers/${id}`),

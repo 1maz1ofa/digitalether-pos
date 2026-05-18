@@ -111,6 +111,20 @@ function quantityAvailable(total, outgoingPromised, outgoingReserved) {
   return t - p - r;
 }
 
+/** On-hand at a branch minus reserved on outgoing promises from that branch. */
+function quantityInStore(onHand, reserved) {
+  const h = Number.isFinite(Number(onHand)) ? Number(onHand) : 0;
+  const r = Number.isFinite(Number(reserved)) ? Number(reserved) : 0;
+  return h - r;
+}
+
+/** Net promised at a branch: incoming minus outgoing. */
+function quantityNetPromised(inPromised, outPromised) {
+  const incoming = Number.isFinite(Number(inPromised)) ? Number(inPromised) : 0;
+  const outgoing = Number.isFinite(Number(outPromised)) ? Number(outPromised) : 0;
+  return incoming - outgoing;
+}
+
 function normalizedVatPercentage(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -2155,10 +2169,14 @@ export function PosPage() {
                     <span className="pos-product-name">{p.name}</span>
                     {hasActiveDefaultLocation ? (() => {
                       const pid = Number(p.id);
-                      const inStore = Number(saleLocationStockByProductId.get(pid) ?? 0);
-                      const promised = Number(saleLocationPromisedByProductId.get(pid) ?? 0);
-                      const promisedQty = Number.isFinite(promised) ? Math.max(0, promised) : 0;
-                      const inStoreQty = Number.isFinite(inStore) ? Math.max(0, inStore) : 0;
+                      const onHand = Number(saleLocationStockByProductId.get(pid) ?? 0);
+                      const reserved = Number(saleLocationOutgoingReservedByProductId.get(pid) ?? 0);
+                      const inPromised = Number(saleLocationPromisedByProductId.get(pid) ?? 0);
+                      const outPromised = Number(
+                        saleLocationOutgoingPromisedByProductId.get(pid) ?? 0
+                      );
+                      const inStoreQty = Math.max(0, quantityInStore(onHand, reserved));
+                      const promisedQty = Math.max(0, quantityNetPromised(inPromised, outPromised));
                       const branchHint = headerBranchName
                         ? ` at ${headerBranchName}`
                         : " at this branch";
@@ -2166,7 +2184,7 @@ export function PosPage() {
                       return (
                         <span
                           className={`pos-product-stock${hasStock ? "" : " pos-product-stock--none"}`}
-                          title={`In store${branchHint}: on-hand quantity physically held at this branch. Promised: quantity other branches have committed to send here (not yet received).`}
+                          title={`In store${branchHint}: on-hand minus reserved. Promised: in promised minus out promised.`}
                         >
                           <span>In store: {formatOnHandQty(inStoreQty)}</span>
                           <span>Promised: {formatOnHandQty(promisedQty)}</span>

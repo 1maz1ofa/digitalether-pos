@@ -41,6 +41,8 @@ const nav = [
   { to: "/movement", label: "Movement" },
   { to: "/movement-types", label: "Movement types" },
   { to: "/customers", label: "Customers" },
+  { to: "/users", label: "Users" },
+  { to: "/roles", label: "Roles" },
   { to: "/invoices", label: "Invoices" },
   { to: "/vat", label: "VAT" },
 ];
