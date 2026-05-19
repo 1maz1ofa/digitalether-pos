@@ -1,6 +1,7 @@
 const pool = require("../db");
 const { verifyToken } = require("../utils/authToken");
 const { buildMenuAccessForUser } = require("../utils/menuAccess");
+const { buildTableAccessForUser } = require("../utils/tableAccess");
 
 const USER_SELECT = `
   SELECT u.id, u.email, u.full_name, u.role_id, u.location_id, u.is_active,
@@ -32,8 +33,11 @@ async function loadUser(userId) {
   if (!rows.length) return null;
   const row = rows[0];
   if (!row.is_active) return null;
-  const menu_access = await buildMenuAccessForUser(row);
-  return { ...row, location_label: locationLabel(row), menu_access };
+  const [menu_access, table_access] = await Promise.all([
+    buildMenuAccessForUser(row),
+    buildTableAccessForUser(row),
+  ]);
+  return { ...row, location_label: locationLabel(row), menu_access, table_access };
 }
 
 async function requireAuth(req, res, next) {

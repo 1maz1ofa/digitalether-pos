@@ -6,8 +6,15 @@ const {
   sendLocationForbidden,
   enforceLocationAccess,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use((req, res, next) => {
+  let table = "inventory";
+  if (req.path.startsWith("/movement-types")) table = "movement_type";
+  else if (req.path.startsWith("/movements")) table = "inventory_movement";
+  return requireTableAccess(table)(req, res, next);
+});
 
 function safeText(value) {
   if (value === undefined || value === null) return null;

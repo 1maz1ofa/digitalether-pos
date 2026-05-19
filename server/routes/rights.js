@@ -1,12 +1,18 @@
 const express = require("express");
 const pool = require("../db");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 const { sendPgError } = require("../utils/dbErrors");
 const { APP_MENU, isValidMenuObjectName } = require("../config/appMenu");
+const {
+  ensureMenuTableRights,
+  shouldEnsureMenuTableRights,
+} = require("../utils/ensureMenuTableRights");
 
 const router = express.Router();
+router.use(requireTableAccess("rights"));
 
 const RIGHT_COLUMNS =
-  "id, role_id, object_name, object_type, can_read, can_edit, can_delete, created_at";
+  "id, role_id, object_name, object_type, can_read, can_create, can_edit, can_delete, created_at";
 
 const OBJECT_TYPES = new Set(["TABLE", "FIELD", "MENU", "SUBMENU"]);
 
@@ -56,9 +62,11 @@ function parseRightBody(body, { requireRoleId = false } = {}) {
   }
 
   const can_read = Boolean(body?.can_read ?? body?.canRead);
+  let can_create = Boolean(body?.can_create ?? body?.canCreate);
   let can_edit = Boolean(body?.can_edit ?? body?.canEdit);
   let can_delete = Boolean(body?.can_delete ?? body?.canDelete);
   if (object_type === "MENU" || object_type === "SUBMENU") {
+    can_create = false;
     can_edit = false;
     can_delete = false;
   }
@@ -68,6 +76,7 @@ function parseRightBody(body, { requireRoleId = false } = {}) {
     object_name,
     object_type,
     can_read,
+    can_create,
     can_edit,
     can_delete,
   };
@@ -151,39 +160,55 @@ router.get("/:id", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
+  const client = await pool.connect();
   try {
     const parsed = parseRightBody(req.body, { requireRoleId: true });
     if (parsed.error) return res.status(400).json({ error: parsed.error });
 
-    const roleChk = await pool.query("SELECT 1 FROM roles WHERE id = $1", [
+    const roleChk = await client.query("SELECT 1 FROM roles WHERE id = $1", [
       parsed.role_id,
     ]);
     if (!roleChk.rowCount) {
       return res.status(400).json({ error: "Role not found" });
     }
 
-    const { rows } = await pool.query(
+    await client.query("BEGIN");
+    const { rows } = await client.query(
       `INSERT INTO rights (
-         role_id, object_name, object_type, can_read, can_edit, can_delete
+         role_id, object_name, object_type, can_read, can_create, can_edit, can_delete
        )
-       VALUES ($1, $2, $3, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING ${RIGHT_COLUMNS}`,
       [
         parsed.role_id,
         parsed.object_name,
         parsed.object_type,
         parsed.can_read,
+        parsed.can_create,
         parsed.can_edit,
         parsed.can_delete,
       ]
     );
+    if (shouldEnsureMenuTableRights(parsed.object_type, parsed.can_read)) {
+      await ensureMenuTableRights(
+        client,
+        parsed.role_id,
+        parsed.object_name,
+        parsed.object_type
+      );
+    }
+    await client.query("COMMIT");
     res.status(201).json(rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
     sendPgError(res, err);
+  } finally {
+    client.release();
   }
 });
 
 router.put("/:id", async (req, res) => {
+  const client = await pool.connect();
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
@@ -192,28 +217,51 @@ router.put("/:id", async (req, res) => {
     const parsed = parseRightBody(req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
 
-    const { rows } = await pool.query(
+    const existing = await client.query(
+      "SELECT role_id FROM rights WHERE id = $1",
+      [id]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ error: "Right not found" });
+    }
+    const roleId = existing.rows[0].role_id;
+
+    await client.query("BEGIN");
+    const { rows } = await client.query(
       `UPDATE rights
        SET object_name = $1,
            object_type = $2,
            can_read = $3,
-           can_edit = $4,
-           can_delete = $5
-       WHERE id = $6
+           can_create = $4,
+           can_edit = $5,
+           can_delete = $6
+       WHERE id = $7
        RETURNING ${RIGHT_COLUMNS}`,
       [
         parsed.object_name,
         parsed.object_type,
         parsed.can_read,
+        parsed.can_create,
         parsed.can_edit,
         parsed.can_delete,
         id,
       ]
     );
-    if (!rows.length) return res.status(404).json({ error: "Right not found" });
+    if (shouldEnsureMenuTableRights(parsed.object_type, parsed.can_read)) {
+      await ensureMenuTableRights(
+        client,
+        roleId,
+        parsed.object_name,
+        parsed.object_type
+      );
+    }
+    await client.query("COMMIT");
     res.json(rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
     sendPgError(res, err);
+  } finally {
+    client.release();
   }
 });
 

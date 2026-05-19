@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -18,6 +19,7 @@ function formatDate(v) {
 }
 
 export function ReserveIssuePage() {
+  const perms = useTableAccess("reserve_issue_header");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [selectedQueueId, setSelectedQueueId] = useState("");
   const [pending, setPending] = useState([]);
@@ -278,7 +280,12 @@ export function ReserveIssuePage() {
                 autoComplete="off"
               />
             </label>
-            <button type="button" className="btn btn-primary" onClick={() => load()} disabled={loading}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => load()}
+              disabled={loading || !perms.canRead}
+            >
               {loading ? "Loading…" : "Load"}
             </button>
           </div>
@@ -293,7 +300,7 @@ export function ReserveIssuePage() {
               type="button"
               className="btn btn-primary"
               onClick={() => issue()}
-              disabled={issuing || !data.items.length}
+              disabled={issuing || !data.items.length || !perms.canCreate}
             >
               {issuing ? "Issuing…" : "Issue and post RESERVEOUT"}
             </button>

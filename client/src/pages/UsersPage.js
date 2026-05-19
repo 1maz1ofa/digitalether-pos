@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const LOCATION_ALL = "all";
 
@@ -30,6 +31,7 @@ function locationOptionLabel(loc) {
 }
 
 export function UsersPage() {
+  const perms = useTableAccess("users");
   const [rows, setRows] = useState([]);
   const [roles, setRoles] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -155,7 +157,12 @@ export function UsersPage() {
           <h1>Users</h1>
           <p className="page-lead">Staff accounts, roles, and default branch assignment.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!perms.canCreate}
+        >
           Add user
         </button>
       </header>
@@ -204,6 +211,7 @@ export function UsersPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!perms.canEdit}
                         >
                           Edit
                         </button>
@@ -211,6 +219,7 @@ export function UsersPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

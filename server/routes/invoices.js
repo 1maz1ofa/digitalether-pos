@@ -1,8 +1,10 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("invoices"));
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

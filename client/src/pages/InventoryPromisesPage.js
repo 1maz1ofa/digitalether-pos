@@ -9,6 +9,7 @@ import {
   filterLocationsForUser,
   resolveDefaultLocationId,
 } from "../utils/userLocation";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -34,6 +35,7 @@ const emptyForm = {
 };
 
 export function InventoryPromisesPage() {
+  const perms = useTableAccess("inventory_promise");
   const { user } = useAuth();
   const canChangeLocation = canChangeRegisterLocation(user);
   const [searchParams] = useSearchParams();
@@ -307,7 +309,7 @@ export function InventoryPromisesPage() {
             type="button"
             className="btn btn-primary"
             onClick={openCreate}
-            disabled={activeLocations.length < 2}
+            disabled={activeLocations.length < 2 || !perms.canCreate}
           >
             New promise
           </button>
@@ -399,7 +401,7 @@ export function InventoryPromisesPage() {
               type="submit"
               form="promise-create-form"
               className="btn btn-primary"
-              disabled={saving}
+              disabled={saving || !perms.canCreate}
             >
               {saving ? "Saving…" : "Create promise"}
             </button>

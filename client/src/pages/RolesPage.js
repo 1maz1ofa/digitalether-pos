@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = { name: "", description: "" };
 
@@ -14,6 +15,7 @@ const emptyRightForm = {
   menu_key: "",
   submenu_key: "",
   can_read: false,
+  can_create: false,
   can_edit: false,
   can_delete: false,
 };
@@ -69,6 +71,8 @@ function permLabel(v) {
 }
 
 export function RolesPage() {
+  const rolePerms = useTableAccess("roles");
+  const rightsPerms = useTableAccess("rights");
   const [rows, setRows] = useState([]);
   const [rightRows, setRightRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -225,6 +229,7 @@ export function RolesPage() {
       menu_key: menuMode ? table_name : "",
       submenu_key: menuMode ? field_name : "",
       can_read: Boolean(row.can_read),
+      can_create: menuMode ? false : Boolean(row.can_create),
       can_edit: menuMode ? false : Boolean(row.can_edit),
       can_delete: menuMode ? false : Boolean(row.can_delete),
     });
@@ -281,6 +286,7 @@ export function RolesPage() {
             ? "FIELD"
             : "TABLE",
         can_read: rightForm.can_read,
+        can_create: isMenu ? false : rightForm.can_create,
         can_edit: isMenu ? false : rightForm.can_edit,
         can_delete: isMenu ? false : rightForm.can_delete,
       };
@@ -356,7 +362,12 @@ export function RolesPage() {
           <h1>Roles</h1>
           <p className="page-lead">Staff permission roles assigned to users.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!rolePerms.canCreate}
+        >
           Add role
         </button>
       </header>
@@ -399,6 +410,7 @@ export function RolesPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!rolePerms.canEdit}
                         >
                           Edit
                         </button>
@@ -406,6 +418,7 @@ export function RolesPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!rolePerms.canDelete}
                         >
                           Delete
                         </button>
@@ -481,6 +494,7 @@ export function RolesPage() {
                   type="button"
                   className="btn btn-sm btn-primary"
                   onClick={openCreateRight}
+                  disabled={!rightsPerms.canCreate}
                 >
                   Add permission
                 </button>
@@ -498,6 +512,7 @@ export function RolesPage() {
                       <th>Object</th>
                       <th>Type</th>
                       <th>Read</th>
+                      <th>Create</th>
                       <th>Edit</th>
                       <th>Delete</th>
                       <th>Created</th>
@@ -516,14 +531,28 @@ export function RolesPage() {
                           {objectTypeLabel(r.object_type)}
                         </td>
                         <td>{permLabel(r.can_read)}</td>
-                        <td>{permLabel(r.can_edit)}</td>
-                        <td>{permLabel(r.can_delete)}</td>
+                        <td>
+                          {isMenuObjectType(r.object_type)
+                            ? "—"
+                            : permLabel(r.can_create)}
+                        </td>
+                        <td>
+                          {isMenuObjectType(r.object_type)
+                            ? "—"
+                            : permLabel(r.can_edit)}
+                        </td>
+                        <td>
+                          {isMenuObjectType(r.object_type)
+                            ? "—"
+                            : permLabel(r.can_delete)}
+                        </td>
                         <td className="muted nowrap">{formatDate(r.created_at)}</td>
                         <td className="col-actions">
                           <button
                             type="button"
                             className="btn btn-sm btn-secondary"
                             onClick={() => openEditRight(r)}
+                            disabled={!rightsPerms.canEdit}
                           >
                             Edit
                           </button>
@@ -531,6 +560,7 @@ export function RolesPage() {
                             type="button"
                             className="btn btn-sm btn-danger"
                             onClick={() => handleDeleteRight(r)}
+                            disabled={!rightsPerms.canDelete}
                           >
                             Delete
                           </button>
@@ -592,6 +622,7 @@ export function RolesPage() {
                   ...emptyRightForm,
                   permission_kind,
                   can_read: rightForm.can_read,
+                  can_create: menuMode ? false : rightForm.can_create,
                   can_edit: menuMode ? false : rightForm.can_edit,
                   can_delete: menuMode ? false : rightForm.can_delete,
                 });
@@ -730,6 +761,17 @@ export function RolesPage() {
               }
             />
             <span>Can read</span>
+          </label>
+          <label className="field field--checkbox">
+            <input
+              type="checkbox"
+              checked={rightForm.can_create}
+              disabled={isMenuPermission}
+              onChange={(e) =>
+                setRightForm({ ...rightForm, can_create: e.target.checked })
+              }
+            />
+            <span>Can create</span>
           </label>
           <label className="field field--checkbox">
             <input

@@ -1,9 +1,11 @@
 const express = require("express");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 const { hashPassword } = require("../utils/password");
 
 const router = express.Router();
+router.use(requireTableAccess("users"));
 
 const USER_SELECT = `
   SELECT u.id, u.email, u.full_name, u.role_id, u.location_id, u.is_active,

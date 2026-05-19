@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { PermissionLink } from "../components/PermissionLink";
+import { useTableAccess } from "../hooks/useTableAccess";
 import { useAuth } from "../context/AuthContext";
 import { getUserLocationId } from "../utils/userLocation";
 
@@ -46,6 +48,7 @@ function locationCell(row) {
 }
 
 export function MovementPage() {
+  const perms = useTableAccess("inventory_movement");
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -110,9 +113,13 @@ export function MovementPage() {
         <div className="card-header-row">
           <h2 className="card-title">Movements</h2>
           <div className="card-header-actions">
-            <Link to="/movement/new" className="btn btn-primary">
+            <PermissionLink
+              canAccess={perms.canCreate}
+              to="/movement/new"
+              className="btn btn-primary"
+            >
               New movement
-            </Link>
+            </PermissionLink>
             <button
               type="button"
               className="btn btn-secondary"

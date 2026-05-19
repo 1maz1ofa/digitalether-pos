@@ -24,8 +24,8 @@ const sqlPath = path.join(__dirname, "rights-menu-permissions.sql");
   const role = await pool.query("SELECT id FROM roles ORDER BY id LIMIT 1");
   if (role.rows[0]) {
     const test = await pool.query(
-      `INSERT INTO rights (role_id, object_name, object_type, can_read, can_edit, can_delete)
-       VALUES ($1, 'pos', 'MENU', true, false, false)
+      `INSERT INTO rights (role_id, object_name, object_type, can_read, can_create, can_edit, can_delete)
+       VALUES ($1, 'pos', 'MENU', true, false, false, false)
        RETURNING id`,
       [role.rows[0].id]
     );

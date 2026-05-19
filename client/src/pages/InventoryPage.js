@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { getUserLocationId } from "../utils/userLocation";
+import { PermissionLink } from "../components/PermissionLink";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 function qtyFmt(v) {
   if (v === null || v === undefined) return "—";
@@ -12,6 +14,7 @@ function qtyFmt(v) {
 }
 
 export function InventoryPage() {
+  const perms = useTableAccess("inventory");
   const { user } = useAuth();
   const userLocationId = useMemo(() => getUserLocationId(user), [user]);
 
@@ -127,13 +130,14 @@ export function InventoryPage() {
                         {stock > 0 ? Number(r.location_count || 0) : "—"}
                       </td>
                       <td>
-                        <Link
+                        <PermissionLink
+                          canAccess={perms.canRead}
                           to={`/inventory/product/${encodeURIComponent(String(r.product_id))}`}
                           className="table-link"
                           title="Open per-location stock page"
                         >
                           {qtyFmt(r.stock_on_hand ?? r.total_quantity)}
-                        </Link>
+                        </PermissionLink>
                       </td>
                     </tr>
                     );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = {
   name: "",
@@ -24,6 +25,7 @@ function formatPercentage(v) {
 }
 
 export function VatPage() {
+  const perms = useTableAccess("vat");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,7 +119,12 @@ export function VatPage() {
           <h1>VAT</h1>
           <p className="page-lead">Create and manage tax rates for sales.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!perms.canCreate}
+        >
           Add VAT
         </button>
       </header>
@@ -164,6 +171,7 @@ export function VatPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!perms.canEdit}
                         >
                           Edit
                         </button>
@@ -171,6 +179,7 @@ export function VatPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

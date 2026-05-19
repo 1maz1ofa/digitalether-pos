@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = {
   code: "",
@@ -20,6 +21,7 @@ function formatDate(v) {
 }
 
 export function CurrenciesPage() {
+  const perms = useTableAccess("currency");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -107,7 +109,12 @@ export function CurrenciesPage() {
           <h1>Currencies</h1>
           <p className="page-lead">Maintain available transaction currencies.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!perms.canCreate}
+        >
           Add currency
         </button>
       </header>
@@ -158,6 +165,7 @@ export function CurrenciesPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!perms.canEdit}
                         >
                           Edit
                         </button>
@@ -165,6 +173,7 @@ export function CurrenciesPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

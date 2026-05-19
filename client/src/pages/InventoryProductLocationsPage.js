@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { PermissionLink } from "../components/PermissionLink";
 import { useAuth } from "../context/AuthContext";
+import { useTableAccess } from "../hooks/useTableAccess";
 import { getUserLocationId } from "../utils/userLocation";
 
 function qtyFmt(v) {
@@ -12,6 +14,9 @@ function qtyFmt(v) {
 }
 
 export function InventoryProductLocationsPage() {
+  const inventoryPerms = useTableAccess("inventory");
+  const productPerms = useTableAccess("product");
+  const promisePerms = useTableAccess("inventory_promise");
   const { user } = useAuth();
   const userLocationId = getUserLocationId(user);
 
@@ -67,9 +72,13 @@ export function InventoryProductLocationsPage() {
       <header className="page-header">
         <div>
           <p className="page-lead" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/inventory" className="table-link">
+            <PermissionLink
+              canAccess={inventoryPerms.canRead}
+              to="/inventory"
+              className="table-link"
+            >
               ← Inventory
-            </Link>
+            </PermissionLink>
           </p>
           <h1>Stock by location</h1>
           <p className="page-lead">
@@ -77,9 +86,13 @@ export function InventoryProductLocationsPage() {
               <>
                 {title}
                 {" · "}
-                <Link to={`/products/${productQs}`} className="table-link">
+                <PermissionLink
+                  canAccess={productPerms.canRead}
+                  to={`/products/${productQs}`}
+                  className="table-link"
+                >
                   open product
-                </Link>
+                </PermissionLink>
               </>
             ) : (
               "Product locations"
@@ -137,22 +150,24 @@ export function InventoryProductLocationsPage() {
                     <td>{qtyFmt(r.stock_on_hand ?? r.total_quantity)}</td>
                     <td>{qtyFmt(r.reserved_quantity)}</td>
                     <td>
-                      <Link
+                      <PermissionLink
+                        canAccess={promisePerms.canRead}
                         to={`/promises?location=${encodeURIComponent(String(r.location_id))}&product=${productQs}`}
                         className="table-link"
                         title="View outgoing promises from this location"
                       >
                         {qtyFmt(r.out_promised_quantity ?? r.promised_quantity)}
-                      </Link>
+                      </PermissionLink>
                     </td>
                     <td>
-                      <Link
+                      <PermissionLink
+                        canAccess={promisePerms.canRead}
                         to={`/promises?product=${productQs}`}
                         className="table-link"
                         title="View promises for this product"
                       >
                         {qtyFmt(r.in_promised_quantity)}
-                      </Link>
+                      </PermissionLink>
                     </td>
                     <td className="muted">
                       {r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}

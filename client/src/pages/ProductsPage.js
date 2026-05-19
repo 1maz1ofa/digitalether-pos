@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, apiMediaUrl } from "../api";
 import { Modal } from "../components/Modal";
+import { PermissionLink } from "../components/PermissionLink";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = {
   code: "",
@@ -34,11 +36,13 @@ function vatLabel(row) {
 }
 
 export function ProductsPage() {
+  const perms = useTableAccess("product");
   const [rows, setRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [vatRates, setVatRates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -68,6 +72,25 @@ export function ProductsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const hay = [
+        r.code,
+        r.name,
+        r.barcode,
+        r.description,
+        r.category_name,
+        r.unit_of_measure,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rows, search]);
 
   useEffect(() => {
     if (modalOpen) return;
@@ -231,7 +254,12 @@ export function ProductsPage() {
           <h1>Products</h1>
           <p className="page-lead">Catalog items, pricing, and category assignment.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!perms.canCreate}
+        >
           Add product
         </button>
       </header>
@@ -243,6 +271,21 @@ export function ProductsPage() {
       ) : null}
 
       <div className="card">
+        <div className="card-header-row">
+          <h2 className="card-title">All products</h2>
+          <div className="card-header-actions">
+            <input
+              className="input"
+              type="search"
+              placeholder="Search code, name, barcode, category…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ minWidth: "16rem" }}
+              aria-label="Search products"
+            />
+          </div>
+        </div>
+
         {loading ? (
           <p className="muted">Loading…</p>
         ) : (
@@ -261,14 +304,16 @@ export function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 ? (
+                {filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="muted">
-                      No products yet.
+                      {rows.length === 0
+                        ? "No products yet."
+                        : "No products match your search."}
                     </td>
                   </tr>
                 ) : (
-                  rows.map((r) => (
+                  filtered.map((r) => (
                     <tr key={r.id}>
                       <td>
                         {r.image_url ? (
@@ -282,14 +327,22 @@ export function ProductsPage() {
                         )}
                       </td>
                       <td>
-                        <Link to={`/products/${r.id}`} className="table-link">
+                        <PermissionLink
+                          canAccess={perms.canRead}
+                          to={`/products/${r.id}`}
+                          className="table-link"
+                        >
                           <code>{r.code}</code>
-                        </Link>
+                        </PermissionLink>
                       </td>
                       <td>
-                        <Link to={`/products/${r.id}`} className="table-link">
+                        <PermissionLink
+                          canAccess={perms.canRead}
+                          to={`/products/${r.id}`}
+                          className="table-link"
+                        >
                           {r.name}
-                        </Link>
+                        </PermissionLink>
                       </td>
                       <td>{r.category_name || "—"}</td>
                       <td>{money(r.unit_price)}</td>
@@ -300,6 +353,7 @@ export function ProductsPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!perms.canEdit}
                         >
                           Edit
                         </button>
@@ -307,6 +361,7 @@ export function ProductsPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

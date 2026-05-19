@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyLocationForm = {
   code: "",
@@ -49,6 +50,8 @@ function getNextTerminalPreviewCode(locationCode, terminals) {
 }
 
 export function LocationsPage() {
+  const locationPerms = useTableAccess("location");
+  const terminalPerms = useTableAccess("terminal");
   const [rows, setRows] = useState([]);
   const [terminalRows, setTerminalRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -244,7 +247,12 @@ export function LocationsPage() {
           <h1>Locations</h1>
           <p className="page-lead">Branches and stores where stock is held.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!locationPerms.canCreate}
+        >
           Add location
         </button>
       </header>
@@ -295,6 +303,7 @@ export function LocationsPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!locationPerms.canEdit}
                         >
                           Edit
                         </button>
@@ -302,6 +311,7 @@ export function LocationsPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!locationPerms.canDelete}
                         >
                           Delete
                         </button>
@@ -430,6 +440,7 @@ export function LocationsPage() {
                   type="button"
                   className="btn btn-sm btn-primary"
                   onClick={openCreateTerminal}
+                  disabled={!terminalPerms.canCreate}
                 >
                   Add terminal
                 </button>
@@ -471,6 +482,7 @@ export function LocationsPage() {
                             type="button"
                             className="btn btn-sm btn-secondary"
                             onClick={() => openEditTerminal(t)}
+                            disabled={!terminalPerms.canEdit}
                           >
                             Edit
                           </button>
@@ -478,6 +490,7 @@ export function LocationsPage() {
                             type="button"
                             className="btn btn-sm btn-danger"
                             onClick={() => handleDeleteTerminal(t)}
+                            disabled={!terminalPerms.canDelete}
                           >
                             Delete
                           </button>

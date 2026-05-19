@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { PermissionLink } from "../components/PermissionLink";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 function money(v) {
   if (v === null || v === undefined) return "—";
@@ -39,6 +41,7 @@ function statusBadgeClass(status) {
 }
 
 export function StocktakesPage() {
+  const perms = useTableAccess("stocktake_header");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -99,9 +102,13 @@ export function StocktakesPage() {
             quantities and review variances.
           </p>
         </div>
-        <Link to="/stocktakes/new" className="btn btn-primary">
+        <PermissionLink
+          canAccess={perms.canCreate}
+          to="/stocktakes/new"
+          className="btn btn-primary"
+        >
           New stock take
-        </Link>
+        </PermissionLink>
       </header>
 
       {error ? (
@@ -193,16 +200,18 @@ export function StocktakesPage() {
                       <td>{money(r.total_system_value)}</td>
                       <td>{money(r.total_variance_value)}</td>
                       <td className="col-actions">
-                        <Link
+                        <PermissionLink
+                          canAccess={perms.canRead}
                           to={`/stocktakes/${r.id}`}
                           className="btn btn-sm btn-secondary"
                         >
                           Open
-                        </Link>
+                        </PermissionLink>
                         <button
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

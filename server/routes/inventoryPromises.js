@@ -7,8 +7,10 @@ const {
   enforceLocationAccess,
   getUserLocationId,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("inventory_promise"));
 
 function parseRequiredPositiveInt(val) {
   const n = parseInt(val, 10);

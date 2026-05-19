@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Modal } from "../components/Modal";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = {
   code: "",
@@ -29,6 +30,7 @@ function boolToForm(v) {
 }
 
 export function MovementTypesPage() {
+  const perms = useTableAccess("movement_type");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -118,7 +120,12 @@ export function MovementTypesPage() {
             etc.).
           </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={openCreate}
+          disabled={!perms.canCreate}
+        >
           Add movement type
         </button>
       </header>
@@ -167,6 +174,7 @@ export function MovementTypesPage() {
                           type="button"
                           className="btn btn-sm btn-secondary"
                           onClick={() => openEdit(r)}
+                          disabled={!perms.canEdit}
                         >
                           Edit
                         </button>
@@ -174,6 +182,7 @@ export function MovementTypesPage() {
                           type="button"
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDelete(r)}
+                          disabled={!perms.canDelete}
                         >
                           Delete
                         </button>

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, apiMediaUrl } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { getUserLocationId } from "../utils/userLocation";
+import { PermissionLink } from "../components/PermissionLink";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 function money(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -27,6 +29,9 @@ function vatLabel(row) {
 }
 
 export function ProductDetailPage() {
+  const productPerms = useTableAccess("product");
+  const inventoryPerms = useTableAccess("inventory");
+  const promisePerms = useTableAccess("inventory_promise");
   const { user } = useAuth();
   const userLocationId = useMemo(() => getUserLocationId(user), [user]);
   const { id: idParam } = useParams();
@@ -76,9 +81,13 @@ export function ProductDetailPage() {
       <header className="page-header">
         <div>
           <p className="page-lead" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/products" className="table-link">
+            <PermissionLink
+              canAccess={productPerms.canRead}
+              to="/products"
+              className="table-link"
+            >
               ← Products
-            </Link>
+            </PermissionLink>
           </p>
           {loading ? (
             <h1>Product</h1>
@@ -167,32 +176,35 @@ export function ProductDetailPage() {
                           {row.location_name || "—"}
                         </td>
                         <td>
-                          <Link
+                          <PermissionLink
+                            canAccess={inventoryPerms.canRead}
                             to={`/inventory/product/${encodeURIComponent(String(id))}?locationId=${encodeURIComponent(String(row.location_id))}`}
                             className="table-link"
                             title="View on-hand quantity for this branch"
                           >
                             {qtyFmt(row.stock_on_hand ?? row.total_quantity)}
-                          </Link>
+                          </PermissionLink>
                         </td>
                         <td>{qtyFmt(row.reserved_quantity)}</td>
                         <td>
-                          <Link
+                          <PermissionLink
+                            canAccess={promisePerms.canRead}
                             to={`/promises?location=${encodeURIComponent(String(row.location_id))}&product=${encodeURIComponent(String(id))}`}
                             className="table-link"
                             title="View outgoing promises from this branch for this product"
                           >
                             {qtyFmt(row.out_promised_quantity ?? row.promised_quantity)}
-                          </Link>
+                          </PermissionLink>
                         </td>
                         <td>
-                          <Link
+                          <PermissionLink
+                            canAccess={promisePerms.canRead}
                             to={`/promises?product=${encodeURIComponent(String(id))}`}
                             className="table-link"
                             title="View promises for this product"
                           >
                             {qtyFmt(row.in_promised_quantity)}
-                          </Link>
+                          </PermissionLink>
                         </td>
                         <td className="muted">
                           {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}

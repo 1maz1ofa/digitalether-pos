@@ -9,6 +9,7 @@ import {
   printStocktakePdf,
   sumDetailValues,
 } from "../utils/stocktakeReport";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const STATUS_OPTIONS = [
   { value: "DRAFT", label: "Draft" },
@@ -85,6 +86,8 @@ function productLabel(p) {
 }
 
 export function StocktakeDetailPage() {
+  const headerPerms = useTableAccess("stocktake_header");
+  const detailPerms = useTableAccess("stocktake_detail");
   const { user } = useAuth();
   const userLocationId = useMemo(() => getUserLocationId(user), [user]);
   const canChangeLocation = userLocationId == null;
@@ -439,7 +442,7 @@ export function StocktakeDetailPage() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={loading || confirming}
+                  disabled={loading || confirming || !headerPerms.canEdit}
                   onClick={confirmStocktake}
                 >
                   {confirming ? "Confirming…" : "Confirm stock take"}
@@ -448,7 +451,7 @@ export function StocktakeDetailPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={loading}
+                disabled={loading || !headerPerms.canRead}
                 onClick={() => printStocktakePdf(header, details)}
               >
                 Print PDF
@@ -456,7 +459,7 @@ export function StocktakeDetailPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={loading}
+                disabled={loading || !headerPerms.canRead}
                 onClick={() => downloadStocktakeCsv(header, details)}
               >
                 Export CSV
@@ -630,7 +633,11 @@ export function StocktakeDetailPage() {
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={savingHeader || (isLocked && !isNew)}
+                disabled={
+                  savingHeader ||
+                  (isLocked && !isNew) ||
+                  (isNew ? !headerPerms.canCreate : !headerPerms.canEdit)
+                }
               >
                 {savingHeader ? "Saving…" : isNew ? "Create stock take" : "Save header"}
               </button>
@@ -638,7 +645,12 @@ export function StocktakeDetailPage() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={loading || confirming || savingHeader}
+                  disabled={
+                    loading ||
+                    confirming ||
+                    savingHeader ||
+                    !headerPerms.canEdit
+                  }
                   onClick={confirmStocktake}
                 >
                   {confirming ? "Confirming…" : "Confirm stock take"}
@@ -674,7 +686,7 @@ export function StocktakeDetailPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={populating || isLocked}
+                disabled={populating || isLocked || !detailPerms.canCreate}
                 onClick={() => populateFromStock(false)}
               >
                 {populating ? "Importing…" : "Import from stock"}
@@ -682,7 +694,7 @@ export function StocktakeDetailPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={populating || isLocked}
+                disabled={populating || isLocked || !detailPerms.canCreate}
                 onClick={() => populateFromStock(true)}
                 title="Include products with zero on-hand at this location"
               >
@@ -691,7 +703,7 @@ export function StocktakeDetailPage() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={isLocked}
+                disabled={isLocked || !detailPerms.canCreate}
                 onClick={openAddDetail}
               >
                 Add line
@@ -746,7 +758,7 @@ export function StocktakeDetailPage() {
                         <button
                           type="button"
                           className="btn btn-sm btn-secondary"
-                          disabled={isLocked}
+                          disabled={isLocked || !detailPerms.canEdit}
                           onClick={() => openEditDetail(row)}
                         >
                           Edit
@@ -754,7 +766,7 @@ export function StocktakeDetailPage() {
                         <button
                           type="button"
                           className="btn btn-sm btn-danger"
-                          disabled={isLocked}
+                          disabled={isLocked || !detailPerms.canDelete}
                           onClick={() => deleteDetail(row)}
                         >
                           Remove
@@ -813,7 +825,10 @@ export function StocktakeDetailPage() {
               type="submit"
               form="stocktake-detail-form"
               className="btn btn-primary"
-              disabled={detailSaving}
+              disabled={
+                detailSaving ||
+                (detailEditingId ? !detailPerms.canEdit : !detailPerms.canCreate)
+              }
             >
               {detailSaving ? "Saving…" : "Save line"}
             </button>

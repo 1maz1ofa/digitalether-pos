@@ -7,8 +7,15 @@ const {
   enforceLocationAccess,
   getUserLocationId,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use((req, res, next) => {
+  const table = /\/details(\/|$)/.test(req.path)
+    ? "stocktake_detail"
+    : "stocktake_header";
+  return requireTableAccess(table)(req, res, next);
+});
 
 const HEADER_STATUSES = ["DRAFT", "IN_PROGRESS", "COMPLETED", "APPROVED", "CANCELLED"];
 

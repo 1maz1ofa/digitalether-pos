@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { filterLocationsForUser, getUserLocationId } from "../utils/userLocation";
+import { useTableAccess } from "../hooks/useTableAccess";
 
 const emptyForm = {
   product_id: "",
@@ -28,6 +29,7 @@ function movementTypeLabel(row) {
 }
 
 export function MovementNewPage() {
+  const perms = useTableAccess("inventory_movement");
   const navigate = useNavigate();
   const { user } = useAuth();
   const userLocationId = useMemo(() => getUserLocationId(user), [user]);
@@ -319,7 +321,11 @@ export function MovementNewPage() {
             </section>
 
             <div className="movement-form-actions">
-              <button type="submit" className="btn btn-primary" disabled={saving}>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={saving || !perms.canCreate}
+              >
                 {saving ? "Saving…" : "Save movement"}
               </button>
               <Link to="/movement" className="btn btn-secondary">

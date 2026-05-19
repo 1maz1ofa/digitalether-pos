@@ -1,8 +1,10 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("vat"));
 
 function parseVatPercentage(value) {
   if (value === undefined || value === null || value === "") return null;

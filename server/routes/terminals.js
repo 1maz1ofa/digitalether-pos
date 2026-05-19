@@ -5,8 +5,10 @@ const {
   getUserLocationId,
   sendLocationForbidden,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("terminal"));
 
 const listSql = `
   SELECT t.id, t.location_id, l.code AS location_code, l.name AS location_name,

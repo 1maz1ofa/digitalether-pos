@@ -5,8 +5,10 @@ const {
   getUserLocationId,
   enforceLocationAccess,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("reserve_issue_header"));
 
 function reserveHeaderFilterSql(userLoc, paramIndex) {
   if (userLoc == null) return "";

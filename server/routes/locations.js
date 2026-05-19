@@ -5,8 +5,10 @@ const {
   getUserLocationId,
   sendLocationForbidden,
 } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("location"));
 
 router.get("/", async (req, res) => {
   try {

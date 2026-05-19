@@ -5,8 +5,10 @@ const multer = require("multer");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 const { getUserLocationId } = require("../utils/userLocationScope");
+const { requireTableAccess } = require("../middleware/requireTableAccess");
 
 const router = express.Router();
+router.use(requireTableAccess("product"));
 
 const productImagesDir = path.join(__dirname, "..", "uploads", "products");
 fs.mkdirSync(productImagesDir, { recursive: true });
