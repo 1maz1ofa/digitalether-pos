@@ -1,13 +1,14 @@
 const express = require("express");
 const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
+const { APP_MENU, isValidMenuObjectName } = require("../config/appMenu");
 
 const router = express.Router();
 
 const RIGHT_COLUMNS =
   "id, role_id, object_name, object_type, can_read, can_edit, can_delete, created_at";
 
-const OBJECT_TYPES = new Set(["TABLE", "FIELD"]);
+const OBJECT_TYPES = new Set(["TABLE", "FIELD", "MENU", "SUBMENU"]);
 
 const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -42,12 +43,25 @@ function parseRightBody(body, { requireRoleId = false } = {}) {
     .trim()
     .toUpperCase();
   if (!OBJECT_TYPES.has(object_type)) {
-    return { error: "object_type must be TABLE or FIELD" };
+    return {
+      error: "object_type must be TABLE, FIELD, MENU, or SUBMENU",
+    };
+  }
+
+  if (
+    (object_type === "MENU" || object_type === "SUBMENU") &&
+    !isValidMenuObjectName(object_name, object_type)
+  ) {
+    return { error: "Invalid menu or sub menu" };
   }
 
   const can_read = Boolean(body?.can_read ?? body?.canRead);
-  const can_edit = Boolean(body?.can_edit ?? body?.canEdit);
-  const can_delete = Boolean(body?.can_delete ?? body?.canDelete);
+  let can_edit = Boolean(body?.can_edit ?? body?.canEdit);
+  let can_delete = Boolean(body?.can_delete ?? body?.canDelete);
+  if (object_type === "MENU" || object_type === "SUBMENU") {
+    can_edit = false;
+    can_delete = false;
+  }
 
   return {
     role_id,
@@ -58,6 +72,10 @@ function parseRightBody(body, { requireRoleId = false } = {}) {
     can_delete,
   };
 }
+
+router.get("/schema/menus", async (_req, res) => {
+  res.json(APP_MENU);
+});
 
 router.get("/schema/tables", async (req, res) => {
   try {

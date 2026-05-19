@@ -4,14 +4,36 @@ import { Modal } from "../components/Modal";
 
 const emptyForm = { name: "", description: "" };
 
+const PERMISSION_KIND_TABLE = "TABLE";
+const PERMISSION_KIND_MENU = "MENU";
+
 const emptyRightForm = {
+  permission_kind: PERMISSION_KIND_TABLE,
   table_name: "",
   field_name: "",
-  object_type: "TABLE",
+  menu_key: "",
+  submenu_key: "",
   can_read: false,
   can_edit: false,
   can_delete: false,
 };
+
+function isMenuObjectType(objectType) {
+  return objectType === "MENU" || objectType === "SUBMENU";
+}
+
+function objectTypeLabel(objectType) {
+  switch (objectType) {
+    case "FIELD":
+      return "Field";
+    case "MENU":
+      return "Menu";
+    case "SUBMENU":
+      return "Sub menu";
+    default:
+      return "Table";
+  }
+}
 
 function parseObjectName(objectName) {
   const s = String(objectName || "").trim();
@@ -63,8 +85,10 @@ export function RolesPage() {
   const [rightSaving, setRightSaving] = useState(false);
   const [dbTables, setDbTables] = useState([]);
   const [dbColumns, setDbColumns] = useState([]);
+  const [menuCatalog, setMenuCatalog] = useState([]);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [columnsLoading, setColumnsLoading] = useState(false);
+  const [menusLoading, setMenusLoading] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -88,7 +112,9 @@ export function RolesPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!rightModalOpen) return undefined;
+    if (!rightModalOpen || rightForm.permission_kind !== PERMISSION_KIND_TABLE) {
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
       setSchemaLoading(true);
@@ -104,10 +130,35 @@ export function RolesPage() {
     return () => {
       cancelled = true;
     };
-  }, [rightModalOpen]);
+  }, [rightModalOpen, rightForm.permission_kind]);
 
   useEffect(() => {
-    if (!rightModalOpen || !rightForm.table_name) {
+    if (!rightModalOpen || rightForm.permission_kind !== PERMISSION_KIND_MENU) {
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setMenusLoading(true);
+      try {
+        const menus = await api.rights.schemaMenus();
+        if (!cancelled) setMenuCatalog(Array.isArray(menus) ? menus : []);
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Failed to load menu items");
+      } finally {
+        if (!cancelled) setMenusLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rightModalOpen, rightForm.permission_kind]);
+
+  useEffect(() => {
+    if (
+      !rightModalOpen ||
+      rightForm.permission_kind !== PERMISSION_KIND_TABLE ||
+      !rightForm.table_name
+    ) {
       setDbColumns([]);
       return undefined;
     }
@@ -126,7 +177,7 @@ export function RolesPage() {
     return () => {
       cancelled = true;
     };
-  }, [rightModalOpen, rightForm.table_name]);
+  }, [rightModalOpen, rightForm.permission_kind, rightForm.table_name]);
 
   function openCreate() {
     setEditingId(null);
@@ -165,14 +216,17 @@ export function RolesPage() {
 
   function openEditRight(row) {
     const { table_name, field_name } = parseObjectName(row.object_name);
+    const menuMode = isMenuObjectType(row.object_type);
     setRightEditingId(row.id);
     setRightForm({
-      table_name,
-      field_name,
-      object_type: row.object_type === "FIELD" ? "FIELD" : "TABLE",
+      permission_kind: menuMode ? PERMISSION_KIND_MENU : PERMISSION_KIND_TABLE,
+      table_name: menuMode ? "" : table_name,
+      field_name: menuMode ? "" : field_name,
+      menu_key: menuMode ? table_name : "",
+      submenu_key: menuMode ? field_name : "",
       can_read: Boolean(row.can_read),
-      can_edit: Boolean(row.can_edit),
-      can_delete: Boolean(row.can_delete),
+      can_edit: menuMode ? false : Boolean(row.can_edit),
+      can_delete: menuMode ? false : Boolean(row.can_delete),
     });
     setRightModalOpen(true);
   }
@@ -205,21 +259,30 @@ export function RolesPage() {
     setRightSaving(true);
     setError("");
     try {
-      const object_name = buildObjectName(
-        rightForm.table_name,
-        rightForm.field_name
-      );
+      const isMenu = rightForm.permission_kind === PERMISSION_KIND_MENU;
+      const object_name = isMenu
+        ? buildObjectName(rightForm.menu_key, rightForm.submenu_key)
+        : buildObjectName(rightForm.table_name, rightForm.field_name);
       if (!object_name) {
-        setError("Table is required");
+        setError(isMenu ? "Menu item is required" : "Table is required");
         setRightSaving(false);
         return;
       }
+      const hasChild = isMenu
+        ? Boolean(rightForm.submenu_key.trim())
+        : Boolean(rightForm.field_name.trim());
       const payload = {
         object_name,
-        object_type: rightForm.field_name.trim() ? "FIELD" : "TABLE",
+        object_type: isMenu
+          ? hasChild
+            ? "SUBMENU"
+            : "MENU"
+          : hasChild
+            ? "FIELD"
+            : "TABLE",
         can_read: rightForm.can_read,
-        can_edit: rightForm.can_edit,
-        can_delete: rightForm.can_delete,
+        can_edit: isMenu ? false : rightForm.can_edit,
+        can_delete: isMenu ? false : rightForm.can_delete,
       };
       if (rightEditingId) {
         await api.rights.update(rightEditingId, payload);
@@ -268,10 +331,23 @@ export function RolesPage() {
 
   const tableOptions = mergeOption(dbTables, rightForm.table_name);
   const columnOptions = mergeOption(dbColumns, rightForm.field_name);
-  const objectPreview = buildObjectName(
-    rightForm.table_name,
-    rightForm.field_name
-  );
+  const isMenuPermission = rightForm.permission_kind === PERMISSION_KIND_MENU;
+
+  const menuOptions = (() => {
+    const ids = menuCatalog.map((m) => m.id);
+    return mergeOption(ids, rightForm.menu_key);
+  })();
+
+  const selectedMenuItem = menuCatalog.find((m) => m.id === rightForm.menu_key);
+  const submenuItems = selectedMenuItem?.children || [];
+  const submenuOptions = (() => {
+    const ids = submenuItems.map((c) => c.id);
+    return mergeOption(ids, rightForm.submenu_key);
+  })();
+
+  const objectPreview = isMenuPermission
+    ? buildObjectName(rightForm.menu_key, rightForm.submenu_key)
+    : buildObjectName(rightForm.table_name, rightForm.field_name);
 
   return (
     <div className="page">
@@ -434,7 +510,11 @@ export function RolesPage() {
                         <td>
                           <code>{r.object_name}</code>
                         </td>
-                        <td>{r.object_type}</td>
+                        <td>
+                          {isMenuObjectType(r.object_type) ? "Menu" : "Table"}
+                          {" · "}
+                          {objectTypeLabel(r.object_type)}
+                        </td>
                         <td>{permLabel(r.can_read)}</td>
                         <td>{permLabel(r.can_edit)}</td>
                         <td>{permLabel(r.can_delete)}</td>
@@ -500,82 +580,147 @@ export function RolesPage() {
               disabled
             />
           </label>
-          <label className="field">
-            <span className="field-label">Table</span>
+          <label className="field field--full">
+            <span className="field-label">Object type</span>
             <select
               className="input"
-              value={rightForm.table_name}
+              value={rightForm.permission_kind}
               onChange={(e) => {
-                const table_name = e.target.value;
+                const permission_kind = e.target.value;
+                const menuMode = permission_kind === PERMISSION_KIND_MENU;
                 setRightForm({
-                  ...rightForm,
-                  table_name,
-                  field_name: "",
-                  object_type: "TABLE",
+                  ...emptyRightForm,
+                  permission_kind,
+                  can_read: rightForm.can_read,
+                  can_edit: menuMode ? false : rightForm.can_edit,
+                  can_delete: menuMode ? false : rightForm.can_delete,
                 });
               }}
               required
-              disabled={schemaLoading}
               autoFocus
             >
-              <option value="">
-                {schemaLoading ? "Loading tables…" : "Select table…"}
-              </option>
-              {tableOptions.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
+              <option value={PERMISSION_KIND_TABLE}>Table</option>
+              <option value={PERMISSION_KIND_MENU}>Menu</option>
             </select>
           </label>
-          <label className="field">
-            <span className="field-label">Field (optional)</span>
-            <select
-              className="input"
-              value={rightForm.field_name}
-              onChange={(e) => {
-                const field_name = e.target.value;
-                setRightForm({
-                  ...rightForm,
-                  field_name,
-                  object_type: field_name ? "FIELD" : "TABLE",
-                });
-              }}
-              disabled={!rightForm.table_name || columnsLoading}
-            >
-              <option value="">
-                {!rightForm.table_name
-                  ? "Select a table first"
-                  : columnsLoading
-                    ? "Loading columns…"
-                    : "— Whole table —"}
-              </option>
-              {columnOptions.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
+          {isMenuPermission ? (
+            <>
+              <label className="field">
+                <span className="field-label">Menu item</span>
+                <select
+                  className="input"
+                  value={rightForm.menu_key}
+                  onChange={(e) => {
+                    const menu_key = e.target.value;
+                    setRightForm({
+                      ...rightForm,
+                      menu_key,
+                      submenu_key: "",
+                    });
+                  }}
+                  required
+                  disabled={menusLoading}
+                >
+                  <option value="">
+                    {menusLoading ? "Loading menu items…" : "Select menu item…"}
+                  </option>
+                  {menuOptions.map((id) => {
+                    const item = menuCatalog.find((m) => m.id === id);
+                    return (
+                      <option key={id} value={id}>
+                        {item?.label || id}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <label className="field">
+                <span className="field-label">Sub menu (optional)</span>
+                <select
+                  className="input"
+                  value={rightForm.submenu_key}
+                  onChange={(e) =>
+                    setRightForm({ ...rightForm, submenu_key: e.target.value })
+                  }
+                  disabled={!rightForm.menu_key || !submenuItems.length}
+                >
+                  <option value="">
+                    {!rightForm.menu_key
+                      ? "Select a menu item first"
+                      : !submenuItems.length
+                        ? "— No sub menus —"
+                        : "— Whole menu item —"}
+                  </option>
+                  {submenuOptions.map((id) => {
+                    const item = submenuItems.find((c) => c.id === id);
+                    return (
+                      <option key={id} value={id}>
+                        {item?.label || id}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="field">
+                <span className="field-label">Table</span>
+                <select
+                  className="input"
+                  value={rightForm.table_name}
+                  onChange={(e) => {
+                    const table_name = e.target.value;
+                    setRightForm({
+                      ...rightForm,
+                      table_name,
+                      field_name: "",
+                    });
+                  }}
+                  required
+                  disabled={schemaLoading}
+                >
+                  <option value="">
+                    {schemaLoading ? "Loading tables…" : "Select table…"}
+                  </option>
+                  {tableOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span className="field-label">Field (optional)</span>
+                <select
+                  className="input"
+                  value={rightForm.field_name}
+                  onChange={(e) =>
+                    setRightForm({ ...rightForm, field_name: e.target.value })
+                  }
+                  disabled={!rightForm.table_name || columnsLoading}
+                >
+                  <option value="">
+                    {!rightForm.table_name
+                      ? "Select a table first"
+                      : columnsLoading
+                        ? "Loading columns…"
+                        : "— Whole table —"}
+                  </option>
+                  {columnOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
           {objectPreview ? (
             <p className="field field--full muted">
               Object name: <code>{objectPreview}</code>
             </p>
           ) : null}
-          <label className="field">
-            <span className="field-label">Object type</span>
-            <select
-              className="input"
-              value={rightForm.object_type}
-              onChange={(e) =>
-                setRightForm({ ...rightForm, object_type: e.target.value })
-              }
-              required
-            >
-              <option value="TABLE">TABLE</option>
-              <option value="FIELD">FIELD</option>
-            </select>
-          </label>
           <label className="field field--checkbox">
             <input
               type="checkbox"
@@ -590,6 +735,7 @@ export function RolesPage() {
             <input
               type="checkbox"
               checked={rightForm.can_edit}
+              disabled={isMenuPermission}
               onChange={(e) =>
                 setRightForm({ ...rightForm, can_edit: e.target.checked })
               }
@@ -600,6 +746,7 @@ export function RolesPage() {
             <input
               type="checkbox"
               checked={rightForm.can_delete}
+              disabled={isMenuPermission}
               onChange={(e) =>
                 setRightForm({ ...rightForm, can_delete: e.target.checked })
               }

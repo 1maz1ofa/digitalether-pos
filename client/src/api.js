@@ -174,6 +174,7 @@ export const api = {
       }),
   },
   rights: {
+    schemaMenus: () => apiRequest("/api/rights/schema/menus"),
     schemaTables: () => apiRequest("/api/rights/schema/tables"),
     schemaColumns: (table) =>
       apiRequest(

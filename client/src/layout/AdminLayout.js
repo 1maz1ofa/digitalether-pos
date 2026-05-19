@@ -1,79 +1,122 @@
-import { useLayoutEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { COLOR_THEME_OPTIONS, useTheme } from "../context/ThemeContext";
 
-function MenuIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 6h16M4 12h16M4 18h16"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function CloseNavIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M6 6l12 12M18 6L6 18"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 const nav = [
   { to: "/pos", label: "POS" },
-  { to: "/categories", label: "Categories" },
-  { to: "/currencies", label: "Currencies" },
-  { to: "/locations", label: "Locations" },
-  { to: "/products", label: "Products" },
-  { to: "/inventory", label: "Inventory" },
-  { to: "/stocktakes", label: "Stock takes" },
-  { to: "/promises", label: "Promises" },
-  { to: "/reserve-issue", label: "Reserve issue" },
-  { to: "/movement", label: "Movement" },
-  { to: "/movement-types", label: "Movement types" },
-  { to: "/customers", label: "Customers" },
-  { to: "/users", label: "Users" },
-  { to: "/roles", label: "Roles" },
-  { to: "/invoices", label: "Invoices" },
-  { to: "/vat", label: "VAT" },
+  {
+    label: "Configurations",
+    children: [
+      { to: "/vat", label: "VAT" },
+      { to: "/movement-types", label: "Movement types" },
+      { to: "/currencies", label: "Currencies" },
+      { to: "/categories", label: "Categories" },
+      { to: "/locations", label: "Locations" },
+    ],
+  },
+  {
+    label: "User management",
+    children: [
+      { to: "/users", label: "Users" },
+      { to: "/roles", label: "Roles" },
+    ],
+  },
+  {
+    label: "Product Management",
+    children: [
+      { to: "/products", label: "Products" },
+      { to: "/inventory", label: "Inventory" },
+      { to: "/stocktakes", label: "Stock Take" },
+      { to: "/movement", label: "Movement" },
+      { to: "/promises", label: "Promises" },
+      { to: "/reserve-issue", label: "Reserve Issues" },
+    ],
+  },
+  {
+    label: "Sales Management",
+    children: [
+      { to: "/customers", label: "Customers" },
+      { to: "/invoices", label: "Invoices" },
+    ],
+  },
 ];
 
-const CHECKOUT_COLOR_SELECT_ID = "admin-checkout-color-theme";
+function navItemIsActive(pathname, to) {
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function AdminNavGroup({ label, items, pathname }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const isActive = items.some((item) => navItemIsActive(pathname, item.to));
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointerDown(e) {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  return (
+    <div
+      className={`admin-nav-group${isActive ? " admin-nav-group--active" : ""}${open ? " admin-nav-group--open" : ""}`}
+      ref={ref}
+    >
+      <button
+        type="button"
+        className="admin-nav-link admin-nav-group-trigger"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+        <span className="admin-nav-group-chevron" aria-hidden />
+      </button>
+      {open ? (
+        <div className="admin-nav-group-menu" role="menu">
+          {items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              role="menuitem"
+              className={({ isActive: linkActive }) =>
+                `admin-nav-group-item${linkActive ? " admin-nav-group-item--active" : ""}`
+              }
+              onClick={() => setOpen(false)}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function CheckoutColorThemeFields({ colorTheme, setColorTheme }) {
   return (
-    <>
-      <label
-        className="color-theme-menu-label"
-        htmlFor={CHECKOUT_COLOR_SELECT_ID}
-      >
-        Checkout colors
-      </label>
-      <select
-        id={CHECKOUT_COLOR_SELECT_ID}
-        className="input color-theme-menu-select"
-        value={colorTheme}
-        onChange={(e) => setColorTheme(e.target.value)}
-        aria-label="Checkout color theme"
-        title="Colors for the sale type bar and Complete sale button on the POS screen"
-      >
-        {COLOR_THEME_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </>
+    <select
+      className="input color-theme-menu-select"
+      value={colorTheme}
+      onChange={(e) => setColorTheme(e.target.value)}
+      aria-label="Checkout color theme"
+      title="Colors for the sale type bar and Complete sale button on the POS screen"
+    >
+      {COLOR_THEME_OPTIONS.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -127,19 +170,6 @@ export function AdminLayout() {
     theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
 
   const isPosRoute = location.pathname === "/pos";
-  const [posNavExpanded, setPosNavExpanded] = useState(
-    () => location.pathname !== "/pos"
-  );
-
-  useLayoutEffect(() => {
-    if (location.pathname === "/pos") {
-      setPosNavExpanded(false);
-    } else {
-      setPosNavExpanded(true);
-    }
-  }, [location.pathname]);
-
-  const navCollapsed = isPosRoute && !posNavExpanded;
 
   async function handleLogout() {
     await logout();
@@ -184,9 +214,7 @@ export function AdminLayout() {
 
   return (
     <div className="admin-shell">
-      <header
-        className={`admin-header${navCollapsed ? " admin-header--pos-nav-collapsed" : ""}`}
-      >
+      <header className="admin-header">
         <div className="admin-brand">
           <img
             className="admin-brand-logo"
@@ -202,13 +230,16 @@ export function AdminLayout() {
           </div>
         </div>
         <div className="admin-header-right">
-          {!navCollapsed ? (
-            <nav
-              id="admin-main-nav"
-              className="admin-nav"
-              aria-label="Main"
-            >
-              {nav.map((item) => (
+          <nav id="admin-main-nav" className="admin-nav" aria-label="Main">
+            {nav.map((item) =>
+              item.children ? (
+                <AdminNavGroup
+                  key={item.label}
+                  label={item.label}
+                  items={item.children}
+                  pathname={location.pathname}
+                />
+              ) : (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -218,44 +249,12 @@ export function AdminLayout() {
                 >
                   {item.label}
                 </NavLink>
-              ))}
-              {isPosRoute ? (
-                <button
-                  type="button"
-                  className="btn btn-secondary admin-nav-collapse-btn"
-                  onClick={() => setPosNavExpanded(false)}
-                  aria-expanded
-                  aria-controls="admin-main-nav"
-                  aria-label="Hide navigation menu"
-                  title="Hide menu"
-                >
-                  <CloseNavIcon />
-                </button>
-              ) : null}
-              {colorThemeMenu}
-              {userMenu}
-              {themeToggle}
-            </nav>
-          ) : (
-            <div className="admin-header-collapsed-nav">
-              <button
-                type="button"
-                className="btn btn-secondary admin-nav-expand-btn"
-                onClick={() => setPosNavExpanded(true)}
-                aria-expanded={false}
-                aria-label="Open navigation menu"
-                title="Menu"
-              >
-                <MenuIcon />
-              </button>
-              <CheckoutColorThemeFields
-                colorTheme={colorTheme}
-                setColorTheme={setColorTheme}
-              />
-              {userMenu}
-              {themeToggle}
-            </div>
-          )}
+              )
+            )}
+            {colorThemeMenu}
+            {userMenu}
+            {themeToggle}
+          </nav>
         </div>
       </header>
       <main className={isPosRoute ? "admin-main admin-main--pos" : "admin-main"}>
