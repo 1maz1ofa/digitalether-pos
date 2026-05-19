@@ -3,7 +3,7 @@ const pool = require("../db");
 const { sendPgError } = require("../utils/dbErrors");
 const { verifyPassword } = require("../utils/password");
 const { signToken } = require("../utils/authToken");
-const { requireAuth, locationLabel } = require("../middleware/requireAuth");
+const { requireAuth, locationLabel, loadUser } = require("../middleware/requireAuth");
 
 const router = express.Router();
 
@@ -43,11 +43,11 @@ router.post("/login", async (req, res) => {
     }
 
     const token = signToken(row.id);
-    const { password_hash: _removed, ...user } = row;
-    res.json({
-      token,
-      user: { ...user, location_label: locationLabel(user) },
-    });
+    const user = await loadUser(row.id);
+    if (!user) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+    res.json({ token, user });
   } catch (err) {
     sendPgError(res, err);
   }

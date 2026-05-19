@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { HomeRedirect } from "./components/HomeRedirect";
 import { AdminLayout } from "./layout/AdminLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
@@ -37,7 +38,7 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="/pos" replace />} />
+          <Route index element={<HomeRedirect />} />
           <Route path="pos" element={<PosPage />} />
           <Route path="categories" element={<CategoriesPage />} />
           <Route path="currencies" element={<CurrenciesPage />} />

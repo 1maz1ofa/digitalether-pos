@@ -2,45 +2,67 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { COLOR_THEME_OPTIONS, useTheme } from "../context/ThemeContext";
+import { MenuProtectedRoute } from "../components/MenuProtectedRoute";
+import { canAccessNavItem } from "../utils/menuAccess";
 
 const nav = [
-  { to: "/pos", label: "POS" },
+  { to: "/pos", label: "POS", menuId: "pos" },
   {
     label: "Configurations",
+    menuId: "configurations",
     children: [
-      { to: "/vat", label: "VAT" },
-      { to: "/movement-types", label: "Movement types" },
-      { to: "/currencies", label: "Currencies" },
-      { to: "/categories", label: "Categories" },
-      { to: "/locations", label: "Locations" },
+      { to: "/vat", label: "VAT", menuId: "vat" },
+      { to: "/movement-types", label: "Movement types", menuId: "movement-types" },
+      { to: "/currencies", label: "Currencies", menuId: "currencies" },
+      { to: "/categories", label: "Categories", menuId: "categories" },
+      { to: "/locations", label: "Locations", menuId: "locations" },
     ],
   },
   {
     label: "User management",
+    menuId: "user-management",
     children: [
-      { to: "/users", label: "Users" },
-      { to: "/roles", label: "Roles" },
+      { to: "/users", label: "Users", menuId: "users" },
+      { to: "/roles", label: "Roles", menuId: "roles" },
     ],
   },
   {
     label: "Product Management",
+    menuId: "product-management",
     children: [
-      { to: "/products", label: "Products" },
-      { to: "/inventory", label: "Inventory" },
-      { to: "/stocktakes", label: "Stock Take" },
-      { to: "/movement", label: "Movement" },
-      { to: "/promises", label: "Promises" },
-      { to: "/reserve-issue", label: "Reserve Issues" },
+      { to: "/products", label: "Products", menuId: "products" },
+      { to: "/inventory", label: "Inventory", menuId: "inventory" },
+      { to: "/stocktakes", label: "Stock Take", menuId: "stocktakes" },
+      { to: "/movement", label: "Movement", menuId: "movement" },
+      { to: "/promises", label: "Promises", menuId: "promises" },
+      { to: "/reserve-issue", label: "Reserve Issues", menuId: "reserve-issue" },
     ],
   },
   {
     label: "Sales Management",
+    menuId: "sales-management",
     children: [
-      { to: "/customers", label: "Customers" },
-      { to: "/invoices", label: "Invoices" },
+      { to: "/customers", label: "Customers", menuId: "customers" },
+      { to: "/invoices", label: "Invoices", menuId: "invoices" },
     ],
   },
 ];
+
+function filterNavForUser(items, menuAccess) {
+  return items
+    .map((item) => {
+      if (item.children) {
+        const children = item.children.filter((child) =>
+          canAccessNavItem(menuAccess, child.menuId, item.menuId)
+        );
+        if (!children.length) return null;
+        return { ...item, children };
+      }
+      if (canAccessNavItem(menuAccess, item.menuId, null)) return item;
+      return null;
+    })
+    .filter(Boolean);
+}
 
 function navItemIsActive(pathname, to) {
   return pathname === to || pathname.startsWith(`${to}/`);
@@ -164,6 +186,7 @@ export function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const visibleNav = filterNavForUser(nav, user?.menu_access);
   const { theme, toggleTheme, colorTheme, setColorTheme } = useTheme();
   const nextLabel = theme === "dark" ? "Light" : "Dark";
   const ariaLabel =
@@ -231,7 +254,7 @@ export function AdminLayout() {
         </div>
         <div className="admin-header-right">
           <nav id="admin-main-nav" className="admin-nav" aria-label="Main">
-            {nav.map((item) =>
+            {visibleNav.map((item) =>
               item.children ? (
                 <AdminNavGroup
                   key={item.label}
@@ -258,7 +281,9 @@ export function AdminLayout() {
         </div>
       </header>
       <main className={isPosRoute ? "admin-main admin-main--pos" : "admin-main"}>
-        <Outlet />
+        <MenuProtectedRoute>
+          <Outlet />
+        </MenuProtectedRoute>
       </main>
     </div>
   );

@@ -24,6 +24,25 @@ function mapPgError(err) {
       detail: err.column,
     };
   }
+  if (err.code === "23514") {
+    const constraint = String(err.constraint || "");
+    if (
+      constraint === "rights_object_type_chk" ||
+      constraint === "rights_object_name_check"
+    ) {
+      return {
+        status: 400,
+        message:
+          "This permission type is not supported by the database yet. Run server/scripts/rights-menu-permissions.sql on this database, then try again.",
+        detail: constraint,
+      };
+    }
+    return {
+      status: 400,
+      message: "A value did not pass validation.",
+      detail: constraint || err.message,
+    };
+  }
   return {
     status: 500,
     message: err.message || "Database error",

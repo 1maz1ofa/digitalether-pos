@@ -1,12 +1,19 @@
 import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { canAccessPath, firstAllowedPath } from "../utils/menuAccess";
+
+function resolvePostLoginPath(requestedPath, menuAccess) {
+  const requested = requestedPath || "/pos";
+  if (canAccessPath(requested, menuAccess)) return requested;
+  return firstAllowedPath(menuAccess) || "/pos";
+}
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from || "/pos";
+  const requestedFrom = location.state?.from;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,7 +21,8 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (!loading && user) {
-    return <Navigate to={from} replace />;
+    const target = resolvePostLoginPath(requestedFrom, user.menu_access);
+    return <Navigate to={target} replace />;
   }
 
   async function handleSubmit(e) {
@@ -22,8 +30,9 @@ export function LoginPage() {
     setError("");
     setSubmitting(true);
     try {
-      await login(email, password);
-      navigate(from, { replace: true });
+      const loggedIn = await login(email, password);
+      const target = resolvePostLoginPath(requestedFrom, loggedIn?.menu_access);
+      navigate(target, { replace: true });
     } catch (err) {
       setError(err.message || "Sign in failed");
     } finally {
